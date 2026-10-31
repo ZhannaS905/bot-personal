@@ -462,6 +462,6 @@ async function prepare({env=process.env,storeFactory,calendarPollStoreFactory,ca
 }
 function attach(service,{schedule=setInterval,cancel=clearInterval}={}){
  let busy=false;const tick=()=>{if(busy)return;busy=true;void service.tick().catch(error=>service.log('Training Test: autopost tick refused '+format(mark(error,'RUNTIME_PREPARE')))).finally(()=>{busy=false})};
- const timer=schedule(tick,1000);tick();return async()=>{cancel(timer);await service.close()};
+ const timer=schedule(tick,120000);tick();return async()=>{cancel(timer);await service.close()};
 }
 module.exports={settings,training,capability,pollBody,Autopost,prepare,attach};
