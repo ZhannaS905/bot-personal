@@ -22,7 +22,13 @@ function createWebhook(service, secret, {log=()=>{}}={}) {
       await service.receive(update);
       note('processed');
       res.writeHead(200).end();
-    } catch { note('handler_failed'); res.writeHead(503).end(); }
+    } catch (error) {
+      const allowed = ['resource-exhausted', 'permission-denied', 'unavailable',
+        'deadline-exceeded', 'failed-precondition', 'aborted'];
+      const code = allowed.includes(error?.code) ? error.code : 'UNKNOWN';
+      note('handler_failed_' + code);
+      res.writeHead(503).end();
+    }
   });
 }
 module.exports = { createWebhook };
