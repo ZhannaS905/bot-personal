@@ -331,9 +331,10 @@ class Autopost{
     await this.publish(t.date);
   }
   if (this.calendarMode) {
-    await this.cleanupCalendarPolls();
+    const publishedPolls = await this.calendarPollStore.listPublished();
+    const remainingPolls = await this.cleanupCalendarPolls(publishedPolls);
     await this.resumeCalendarDeletes();
-    await this.refreshCalendarPolls();
+    await this.refreshCalendarPolls(remainingPolls);
     return;
   } // CALENDAR_REFRESH_TICK
   if(!times[t.day]||t.date===POLL.date||+this.now()>=closesAt(t.date))return;
@@ -349,25 +350,26 @@ class Autopost{
    await this.store.releaseEdit(t.date,token);
   }
  })}
- async cleanupCalendarPolls() {
+ async cleanupCalendarPolls(prefetchedPolls) {
   if (!this.calendarMode || !this.calendarPollStore) return;
 
   const now = +this.now();
-  const polls = await this.calendarPollStore.listPublished();
+  const polls = Array.isArray(prefetchedPolls) ? prefetchedPolls : await this.calendarPollStore.listPublished();
+  const remaining = [];
 
   for (const poll of polls) {
     const date = poll.workout?.date;
     if (typeof date !== 'string' ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+        !/^\d{4}-\d{2}-\d{2}$/.test(date)) { remaining.push(poll); continue; }
 
     const deadline = Date.parse(date + 'T22:00:00+03:00');
-    if (!Number.isFinite(deadline) || now < deadline) continue;
+    if (!Number.isFinite(deadline) || now < deadline) { remaining.push(poll); continue; }
 
     try {
       const claimed = await this.calendarPollStore.beginDelete(
         poll.key, poll.id, poll.mid
       );
-      if (!claimed) continue;
+      if (!claimed) { remaining.push(poll); continue; }
       await this.api.deleteCalendarPoll({...poll, status: 'deletePending'});
       await this.calendarPollStore.finishDelete(
         poll.key, poll.id, poll.mid
@@ -387,10 +389,12 @@ class Autopost{
         this.log('Training Test: calendar poll deletion failed; retry later.');
       }
     }
+    remaining.push(poll);
   }
+   return remaining;
  }
 
- async resumeCalendarDeletes() {
+  async resumeCalendarDeletes() {
     if (!this.calendarMode || !this.calendarPollStore ||
         typeof this.calendarPollStore.listPendingDeletes !== 'function') return;
 
@@ -428,10 +432,10 @@ class Autopost{
     }
   }
 
-  async refreshCalendarPolls() {
+  async refreshCalendarPolls(prefetchedPolls) {
     if (!this.calendarMode || !this.calendar || !this.calendarPollStore) return;
 
-    const polls = await at('CALENDAR_LIST', () => this.calendarPollStore.listPublished());
+    const polls = Array.isArray(prefetchedPolls) ? prefetchedPolls : await at('CALENDAR_LIST', () => this.calendarPollStore.listPublished());
 
     for (const poll of polls) {
       const key = poll.key;
@@ -443,9 +447,21 @@ class Autopost{
         continue;
       }
 
-      await at('CALENDAR_SYNC', () => this.calendarPollStore.syncWorkout(key, workout));
+      // Avoid a Firestore transaction when the workout has not changed.
+      const changed =
+        poll.workout?.date !== workout.date ||
+        poll.workout?.time !== workout.time ||
+        poll.workout?.location !== workout.location ||
+        Boolean(poll.cancelled) !== Boolean(workout.cancelled);
 
-      const current = await this.calendarPollStore.read(key);
+      let current = poll;
+      if (changed) {
+        const synced = await at('CALENDAR_SYNC', () =>
+          this.calendarPollStore.syncWorkout(key, workout));
+        if (synced !== false) {
+          current = await this.calendarPollStore.read(key);
+        }
+      }
       if (!current || current.status !== 'published' ||
           current.revision === current.displayedRevision) continue;
 
