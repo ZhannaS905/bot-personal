@@ -11,7 +11,10 @@ async function main({env=process.env}={}) {
    const load=require('node:module').createRequire(require('node:path').join(__dirname,'direct-sdk/package.json'));
    return {...load('firebase/app'),...load('firebase/auth'),...load('firebase/firestore')};
   });
-  prepared=await at('RUNTIME_PREPARE',()=>require('./src/fitpp-direct-runtime').prepare({env,sdk}));
+  const tracedSdk=env.FITPP_TRACE_WRITES==='true'
+    ?require('./firestore-write-counter.local-debug.cjs').wrapSdk(sdk)
+    :sdk;
+  prepared=await at('RUNTIME_PREPARE',()=>require('./src/fitpp-direct-runtime').prepare({env,sdk:tracedSdk}));
   autopost=await at('AUTOPOST_PREPARE',()=>autopostModule.prepare({env,storeFactory:prepared.autopostStore,booking:prepared.dailyBooking,calendarPollStoreFactory:prepared.calendarPollStore,calendarStore:prepared.calendarStore,calendarDb:prepared.calendarDb}));
   const server=await at('BRIDGE_START',()=>require('./src/fitpp-test-bridge').main({...prepared,autopost}));
   // Drain Firestore work before closing the shared authenticated session.
