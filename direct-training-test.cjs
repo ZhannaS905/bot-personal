@@ -14,7 +14,27 @@ async function main({env=process.env}={}) {
   let tracedSdk=sdk;
   if(env.FITPP_TRACE_WRITES==='true'){
     try {
-      tracedSdk=require('./firestore-write-counter.local-debug.cjs').wrapSdk(sdk);
+      const counts={set:0,update:0,delete:0};
+      tracedSdk={...sdk,runTransaction(database,callback,options){
+        return sdk.runTransaction(database,tx=>callback(new Proxy(tx,{
+          get(target,property){
+            if(['set','update','delete'].includes(property)){
+              return (...args)=>{
+                counts[property]++;
+                console.log('[FIRESTORE_WRITE_ATTEMPT]',JSON.stringify({
+                  operation:property,
+                  path:args[0]?.path??'(unknown)',
+                  count:counts[property],
+                  stack:new Error().stack.split('\n').slice(2,7)
+                }));
+                return target[property](...args);
+              };
+            }
+            const value=Reflect.get(target,property,target);
+            return typeof value==='function'?value.bind(target):value;
+          }
+        })),options);
+      }};
       console.log('FITPP_TRACE_LOADED');
     } catch(error) {
       console.error('FITPP_TRACE_LOAD_FAILED code='+(
