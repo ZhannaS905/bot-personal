@@ -76,14 +76,14 @@ test('votes remain open during 60-minute training then close; foreign users/mess
  for(const mutate of [u=>{u.message.body.mid='mid.foreign'},u=>{u.message.recipient.chat_id='-1'},u=>{u.callback.user.is_bot=true},u=>{u.callback.timestamp-=86400001}]){const u=callback(p);mutate(u);await f.s.receive(u);assert.deepEqual((await f.s.store.read(p.date)).votes,{})}
  f.time('2026-11-02T17:30:00Z');await f.s.receive(callback(p,'during','yes',Date.parse('2026-11-02T17:30:00Z')));f.time('2026-11-02T18:00:00Z');await f.s.receive(callback(p,'closed','cancel',Date.parse('2026-11-02T18:00:00Z')));assert.equal(Object.keys((await f.s.store.read(p.date)).votes).length,1);
 });
-test('1000ms scheduler avoids backlog; FitPP/contact traffic bypasses publication queue',async t=>{
- const f=fixture(t);let interval,cancelled=false;const stop=attach(f.s,{schedule(fn,ms){interval={fn,ms};return 1},cancel(){cancelled=true}});assert.equal(interval.ms,1000);let release;const pending=f.s.run(()=>new Promise(r=>release=r));await new Promise(r=>setImmediate(r));assert.equal(await f.s.receive({update_type:'bot_started'}),false);assert.equal(await f.s.receive(callback({...POLL,id:POLL.uuid})),false);release();await pending;await stop();assert(cancelled);
+test('120000ms scheduler avoids backlog; FitPP/contact traffic bypasses publication queue',async t=>{
+ const f=fixture(t);let interval,cancelled=false;const stop=attach(f.s,{schedule(fn,ms){interval={fn,ms};return 1},cancel(){cancelled=true}});assert.equal(interval.ms,120000);let release;const pending=f.s.run(()=>new Promise(r=>release=r));await new Promise(r=>setImmediate(r));assert.equal(await f.s.receive({update_type:'bot_started'}),false);assert.equal(await f.s.receive(callback({...POLL,id:POLL.uuid})),false);release();await pending;await stop();assert(cancelled);
 });
 function rawFixture(){
  const requests=[],p={id:'a'.repeat(8)+'-aaaa-aaaa-aaaa-'+ 'a'.repeat(12),date:'2026-11-02',votes:{},order:[],mid:'mid.test',status:'published'};
  let me={user_id:123,username:'id623401053090_1_bot',is_bot:true},chat={chat_id:CHAT,title:'Тест тренировок'},member={user_id:123,is_bot:true};
  let message={sender:me,recipient:{chat_id:CHAT},body:{mid:p.mid,attachments:body({...p,votes:new Map()}).attachments}};
- return {requests,p,setMe:v=>me=v,setChat:v=>chat=v,setMember:v=>member=v,setMessage:v=>message=v,raw:{async request(method,url){requests.push([method,url]);return url==='/me'?me:url.endsWith('/members/me')?member:url.startsWith('/chats/')?chat:message},async send(chat,b,opts){requests.push(['POST',chat,b,opts]);return 'mid.test'},async edit(mid,b){requests.push(['PUT',mid,b])}}};
+ return {requests,p,setMe:v=>me=v,setChat:v=>chat=v,setMember:v=>member=v,setMessage:v=>message=v,raw:{async request(method,url,params){requests.push([method,url,params]);return url==='/me'?me:url.endsWith('/members/me')?member:url.startsWith('/chats/')?chat:message},async send(chat,b,opts){requests.push(['POST',chat,b,opts]);return 'mid.test'},async edit(mid,b){requests.push(['PUT',mid,b])}}};
 }
 test('capability rechecks identity before every send, pins chat and verifies edit ownership/buttons',async()=>{
  const r=rawFixture(),c={token:'offline',expectedId:'123'},api=await capability(c,{raw:r.raw});
@@ -93,6 +93,44 @@ test('capability rechecks identity before every send, pins chat and verifies edi
 test('wrong bot, chat, membership, edit sender/recipient/keyboards cannot write',async()=>{
  for(const patch of [r=>r.setMe({user_id:124,username:'id623401053090_1_bot',is_bot:true}),r=>r.setMe({user_id:123,username:'id623401053090_1_bot',is_bot:false}),r=>r.setChat({chat_id:'-1',title:'Тест тренировок'}),r=>r.setChat({chat_id:CHAT,title:'Рабочая группа'}),r=>r.setMember({user_id:124,is_bot:true})]){const r=rawFixture();patch(r);await assert.rejects(capability({expectedId:'123'},{raw:r.raw}));assert(!r.requests.some(x=>['POST','PUT','DELETE'].includes(x[0])))}
  for(const m of [{},{sender:{user_id:123,is_bot:true},recipient:{chat_id:'-1'},body:{mid:'mid.test'}},{sender:{user_id:124,is_bot:true},recipient:{chat_id:CHAT},body:{mid:'mid.test',attachments:[]}}]){const r=rawFixture(),a=await capability({expectedId:'123'},{raw:r.raw});r.setMessage(m);await assert.rejects(a.edit(r.p),/SCOPE/);assert(!r.requests.some(x=>x[0]==='PUT'))}
+});
+
+test('command deletion requires a newly published poll',async t=>{
+ const f=fixture(t);
+ f.s.calendarMode=true;
+ f.s.admins=['5819064'];
+ let deleted=0;
+ f.s.api.deleteAdminCommand=async()=>{deleted++};
+ f.s.publishTodayCalendar=async()=>0;
+ f.time('2026-11-02T08:00:00Z');
+ await f.s.receive({...command(),message:{...command().message,sender:{user_id:5819064,is_bot:false},body:{mid:'mid.command',text:'/опрос'}}});
+ assert.equal(deleted,0);
+ f.s.publishTodayCalendar=async()=>1;
+ await f.s.receive({...command(),message:{...command().message,sender:{user_id:5819064,is_bot:false},body:{mid:'mid.command',text:'/опрос'}}});
+ assert.equal(deleted,1);
+});
+
+test('deleteAdminCommand validates command scope before deleting',async()=>{
+ const r=rawFixture();
+ const api=await capability({token:'offline',expectedId:'123'},{raw:r.raw});
+ const m={
+  sender:{user_id:5819064,is_bot:false},
+  recipient:{chat_id:CHAT,chat_type:'chat'},
+  body:{mid:'mid.command',text:'/опрос'}
+ };
+ r.setMessage(m);
+ await api.deleteAdminCommand(m,['5819064']);
+ assert.equal(r.requests.filter(x=>x[0]==='DELETE').length,1);
+
+ for(const changed of [
+  {...m,body:{...m.body,text:'Привет'}},
+  {...m,recipient:{...m.recipient,chat_id:'-1'}},
+  {...m,sender:{user_id:999,is_bot:false}}
+ ]){
+  const before=r.requests.filter(x=>x[0]==='DELETE').length;
+  await assert.rejects(api.deleteAdminCommand(changed,['5819064']));
+  assert.equal(r.requests.filter(x=>x[0]==='DELETE').length,before);
+ }
 });
 
 test('authenticated shared webhook routes new polls, old FitPP pilot and contacts independently',async t=>{
@@ -115,4 +153,68 @@ test('authenticated shared webhook routes new polls, old FitPP pilot and contact
  const old=callback({...POLL,id:POLL.uuid},'pilot','yes',Date.now());old.callback.user.user_id=5819064;
  assert.equal(await request(old),200);assert.equal(commits,1);
  assert.equal(await request({update_type:'bot_started'}),200);assert.equal(contacts,1);
+});
+
+test('calendar deletion allows only bot-owned messages in test chat', async () => {
+  const makePoll = () => ({
+    key: 'a'.repeat(64),
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    mid: 'mid.test',
+    botId: '123',
+    chat: CHAT,
+    status: 'deletePending'
+  });
+
+  const r = rawFixture();
+  const api = await capability(
+    {token: 'offline', expectedId: '123'},
+    {raw: r.raw}
+  );
+
+  await api.deleteCalendarPoll(makePoll());
+
+  assert.equal(
+    r.requests.filter(x => x[0] === 'DELETE').length,
+    1
+  );
+  assert.deepEqual(
+    r.requests.find(x => x[0] === 'DELETE'),
+    ['DELETE', '/messages', {message_id: 'mid.test'}]
+  );
+
+  for (const message of [
+    {
+      sender: {user_id: 999, is_bot: true},
+      recipient: {chat_id: CHAT},
+      body: {mid: 'mid.test'}
+    },
+    {
+      sender: {user_id: 123, is_bot: true},
+      recipient: {chat_id: '-1'},
+      body: {mid: 'mid.test'}
+    },
+    {
+      sender: {user_id: 123, is_bot: false},
+      recipient: {chat_id: CHAT},
+      body: {mid: 'mid.test'}
+    }
+  ]) {
+    const f = rawFixture();
+    f.setMessage(message);
+
+    const guarded = await capability(
+      {token: 'offline', expectedId: '123'},
+      {raw: f.raw}
+    );
+
+    await assert.rejects(
+      guarded.deleteCalendarPoll(makePoll()),
+      /SCOPE_REFUSED/
+    );
+
+    assert.equal(
+      f.requests.filter(x => x[0] === 'DELETE').length,
+      0
+    );
+  }
 });

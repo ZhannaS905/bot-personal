@@ -31,7 +31,58 @@ async function capability(c,{raw=new MaxApi(c.token)}={}){
   if(member.user_id!==Number(c.expectedId)||member.is_bot!==true)throw Error('AUTOPOST_MEMBERSHIP_REFUSED');
  }
  await verify();
- return {verify,async answer(id){if(typeof id!=='string'||!id.trim()||id.length>256)throw Error('CALLBACK_ID_REQUIRED');return raw.request('POST','/answers',{callback_id:id},{})},async editCalendar(p, {beforePut=async()=>{}}={}) {
+ return {verify,
+ async deleteCalendarPoll(p) {
+  if (p?.status !== 'deletePending' ||
+      !MID.test(p.mid) ||
+      !UUID.test(p.id) ||
+      !/^[a-f0-9]{64}$/.test(p.key) ||
+      p.chat !== CHAT ||
+      p.botId !== String(c.expectedId)) {
+    throw Error('CALENDAR_DELETE_REFUSED');
+  }
+
+  await verify();
+
+  const existing = await raw.request(
+    'GET', '/messages/' + encodeURIComponent(p.mid)
+  );
+
+  if (existing?.body?.mid !== p.mid ||
+      String(existing?.recipient?.chat_id) !== CHAT ||
+      String(existing?.sender?.user_id) !== String(c.expectedId) ||
+      existing?.sender?.is_bot !== true) {
+    throw Error('CALENDAR_DELETE_SCOPE_REFUSED');
+  }
+
+  await raw.request('DELETE', '/messages', {message_id:p.mid});
+ },
+
+ async deleteAdminCommand(m, admins) {
+  if (m?.body?.text !== '/опрос' ||
+      !MID.test(m.body?.mid) ||
+      String(m.recipient?.chat_id) !== CHAT ||
+      m.recipient?.chat_type !== 'chat' ||
+      m.sender?.is_bot !== false ||
+      !Number.isSafeInteger(m.sender?.user_id) ||
+      !Array.isArray(admins) ||
+      !admins.includes(String(m.sender.user_id))) {
+    throw Error('COMMAND_DELETE_REFUSED');
+  }
+  await verify();
+  const existing = await raw.request(
+    'GET', '/messages/' + encodeURIComponent(m.body.mid)
+  );
+  if (existing?.body?.mid !== m.body.mid ||
+      existing?.body?.text !== '/опрос' ||
+      String(existing?.recipient?.chat_id) !== CHAT ||
+      existing?.sender?.user_id !== m.sender.user_id ||
+      existing?.sender?.is_bot !== false) {
+    throw Error('COMMAND_DELETE_SCOPE_REFUSED');
+  }
+  await raw.request('DELETE', '/messages', {message_id:m.body.mid});
+ },
+ async answer(id){if(typeof id!=='string'||!id.trim()||id.length>256)throw Error('CALLBACK_ID_REQUIRED');return raw.request('POST','/answers',{callback_id:id},{})},async editCalendar(p, {beforePut=async()=>{}}={}) {
   if (p?.status !== 'published' ||
       p.cancelled === true ||
       !MID.test(p.mid) ||
@@ -280,6 +331,8 @@ class Autopost{
     await this.publish(t.date);
   }
   if (this.calendarMode) {
+    await this.cleanupCalendarPolls();
+    await this.resumeCalendarDeletes();
     await this.refreshCalendarPolls();
     return;
   } // CALENDAR_REFRESH_TICK
@@ -296,7 +349,86 @@ class Autopost{
    await this.store.releaseEdit(t.date,token);
   }
  })}
- async refreshCalendarPolls() {
+ async cleanupCalendarPolls() {
+  if (!this.calendarMode || !this.calendarPollStore) return;
+
+  const now = +this.now();
+  const polls = await this.calendarPollStore.listPublished();
+
+  for (const poll of polls) {
+    const date = poll.workout?.date;
+    if (typeof date !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+
+    const deadline = Date.parse(date + 'T22:00:00+03:00');
+    if (!Number.isFinite(deadline) || now < deadline) continue;
+
+    try {
+      const claimed = await this.calendarPollStore.beginDelete(
+        poll.key, poll.id, poll.mid
+      );
+      if (!claimed) continue;
+      await this.api.deleteCalendarPoll({...poll, status: 'deletePending'});
+      await this.calendarPollStore.finishDelete(
+        poll.key, poll.id, poll.mid
+      );
+      this.log('Training Test: expired calendar poll deleted.');
+    } catch (error) {
+      if (/^MAX HTTP 404$/.test(error?.message || '')) {
+        try {
+          await this.calendarPollStore.markDeleteNeedsReview(
+            poll.key, poll.id, poll.mid
+          );
+          this.log('Training Test: calendar deletion requires manual review.');
+        } catch {
+          this.log('Training Test: failed to save deletion review flag.');
+        }
+      } else {
+        this.log('Training Test: calendar poll deletion failed; retry later.');
+      }
+    }
+  }
+ }
+
+ async resumeCalendarDeletes() {
+    if (!this.calendarMode || !this.calendarPollStore ||
+        typeof this.calendarPollStore.listPendingDeletes !== 'function') return;
+
+    const pending = await this.calendarPollStore.listPendingDeletes();
+
+    for (const poll of pending) {
+      if (poll.deleteNeedsReview === true) continue;
+      const date = poll.workout?.date;
+      if (typeof date !== 'string' ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+
+      const deadline = Date.parse(date + 'T22:00:00+03:00');
+      if (!Number.isFinite(deadline) || +this.now() < deadline) continue;
+
+      try {
+        await this.api.deleteCalendarPoll(poll);
+        await this.calendarPollStore.finishDelete(
+          poll.key, poll.id, poll.mid
+        );
+        this.log('Training Test: pending calendar deletion completed.');
+      } catch (error) {
+        if (/^MAX HTTP 404$/.test(error?.message || '')) {
+          try {
+            await this.calendarPollStore.markDeleteNeedsReview(
+              poll.key, poll.id, poll.mid
+            );
+            this.log('Training Test: calendar deletion requires manual review.');
+          } catch {
+            this.log('Training Test: failed to save deletion review flag.');
+          }
+        } else {
+          this.log('Training Test: pending deletion unresolved; retry later.');
+        }
+      }
+    }
+  }
+
+  async refreshCalendarPolls() {
     if (!this.calendarMode || !this.calendar || !this.calendarPollStore) return;
 
     const polls = await at('CALENDAR_LIST', () => this.calendarPollStore.listPublished());
@@ -398,7 +530,14 @@ class Autopost{
      if (!Number.isSafeInteger(timestamp) ||
          Math.abs(+this.now() - timestamp) > 60000) return false;
 
-     await this.publishTodayCalendar();
+     const published = await this.publishTodayCalendar();
+     if (published > 0) {
+       try {
+         await this.api.deleteAdminCommand(m, this.admins);
+       } catch {
+         this.log('Training Test: admin command deletion failed.');
+       }
+     }
      return true;
    });
  } // CALENDAR_ADMIN_COMMAND

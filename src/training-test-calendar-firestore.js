@@ -13,13 +13,13 @@ const KEY=/^[a-f0-9]{64}$/;
 const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
 function validate(p,botId,key){
  if(!p||p.version!==1||p.botId!==botId||p.chat!==CHAT||p.key!==key||!KEY.test(key)||!UUID.test(p.id)||
- !['reserved','published','uncertain'].includes(p.status)||!p.workout||workoutKey(p.workout)!==key||
+ !['reserved','published','uncertain','deletePending','deleted'].includes(p.status)||!p.workout||workoutKey(p.workout)!==key||
  !Number.isSafeInteger(p.createdAt)||!Number.isSafeInteger(p.revision)||!Number.isSafeInteger(p.displayedRevision)||
  (p.lastEventUid!==undefined&&p.lastEventUid!==null&&(typeof p.lastEventUid!=='string'||!/^[1-9]\d*$/.test(p.lastEventUid)))||p.displayedRevision<0||p.displayedRevision>p.revision||!p.votes||Array.isArray(p.votes)||
  !p.last||Array.isArray(p.last)||!Array.isArray(p.order)||new Set(p.order).size!==p.order.length||
  p.order.length!==Object.keys(p.votes).length||p.order.some(uid=>!/^[1-9]\d*$/.test(uid)||typeof p.votes[uid]!=='string'||p.votes[uid].length>100)||
  Object.entries(p.last).some(([uid,at])=>!/^[1-9]\d*$/.test(uid)||!Number.isSafeInteger(at))||
- (p.status==='published'&&!MID.test(p.mid))||
+ (['published','deletePending','deleted'].includes(p.status)&&!MID.test(p.mid))||
  (p.editLease&&(!UUID.test(p.editLease.token)||!Number.isSafeInteger(p.editLease.until))))throw Error('CALENDAR_POLL_DOCUMENT_REFUSED');
  return p;
 }
@@ -48,6 +48,15 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
    await validateAuth();
    return snap.docs.map(doc=>validate(doc.data(),botId,doc.id));
   },
+  async listPendingDeletes(){
+   await validateAuth();
+   const collection=sdk.collection(raw,ROOT,botId,'polls');
+   const query=sdk.query(collection,sdk.where('status','==','deletePending'));
+   const snap=await sdk.getDocsFromServer(query);
+   await validateAuth();
+   return snap.docs.map(doc=>validate(doc.data(),botId,doc.id));
+  },
+
   async reserve(workout,candidate){
    const key=workoutKey(workout);
    return tx(key,({p,set})=>{
@@ -60,6 +69,37 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
    if(p?.id!==id||p.status!=='reserved')throw Error('CALENDAR_POLL_RESERVATION_REFUSED');
    set({...p,status:'published',mid});return true;
   })},
+  async beginDelete(key,id,mid){
+   if(!UUID.test(id)||!MID.test(mid))throw Error('CALENDAR_DELETE_REFUSED');
+   return tx(key,({p,set})=>{
+    if(p?.id!==id||p.mid!==mid||p.status!=='published')return false;
+    const next={...p,status:'deletePending',deleteRequestedAt:now()};
+    delete next.editLease;
+    set(next);
+    return true;
+   });
+  },
+
+  async markDeleteNeedsReview(key,id,mid){
+   if(!UUID.test(id)||!MID.test(mid))throw Error('CALENDAR_DELETE_REFUSED');
+   return tx(key,({p,set})=>{
+    if(p?.id!==id||p.mid!==mid||p.status!=='deletePending')return false;
+    set({...p,deleteNeedsReview:true,deleteReviewRequestedAt:now()});
+    return true;
+   });
+  },
+
+  async finishDelete(key,id,mid){
+   if(!UUID.test(id)||!MID.test(mid))throw Error('CALENDAR_DELETE_REFUSED');
+   return tx(key,({p,set})=>{
+    if(p?.id!==id||p.mid!==mid||p.status!=='deletePending'||p.deleteNeedsReview===true)return false;
+    const next={...p,status:'deleted',deletedAt:now()};
+    delete next.editLease;
+    set(next);
+    return true;
+   });
+  },
+
   async uncertain(key,id){return tx(key,({p,set})=>{
    if(p?.id===id&&p.status==='reserved')set({...p,status:'uncertain'});return false;
   })},
@@ -127,7 +167,7 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
   })},
   async checkEdit(key,token){const p=await this.read(key);if(p?.editLease?.token!==token||p.editLease.until<now()+20000)throw Error('CALENDAR_POLL_EDIT_LEASE_EXPIRED')},
   async finishEdit(key,token,revision){return tx(key,({p,set})=>{
-   if(p?.editLease?.token!==token)return false;
+   if(p?.status!=='published'||p.editLease?.token!==token)return false;
    const next={...p,displayedRevision:Math.max(p.displayedRevision,revision)};delete next.editLease;set(next);return true;
   })},
   async releaseEdit(key,token){return tx(key,({p,set})=>{

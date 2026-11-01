@@ -381,3 +381,50 @@ test('failed booking write rolls back MAX vote and receipt', async () => {
 
   assert.deepEqual(receiptPaths, [], 'Квитанция события не должна появиться');
 });
+
+test('pending deletion blocks completion of an earlier edit', async () => {
+  const {store} = setup();
+
+  await store.reserve(workout, {id: uuid, createdAt: 100});
+  await store.finish(key, uuid, 'mid.test');
+
+  // Создаём изменение, которое требует обновления сообщения.
+  await store.vote(key, {
+    id: 'callback-before-delete',
+    uuid,
+    mid: 'mid.test',
+    uid: '80',
+    at: 200,
+    action: 'yes',
+    name: 'Тест'
+  }, () => ({text: 'OK'}));
+
+  const claimed = await store.claimEdit(key);
+  assert.ok(claimed);
+
+  const token = claimed.editLease.token;
+
+  assert.equal(await store.beginDelete(key, uuid, 'mid.test'), true);
+
+  // Старое редактирование больше не должно завершаться.
+  assert.equal(await store.finishEdit(key, token, claimed.revision), false);
+
+  const pending = await store.read(key);
+  assert.equal(pending.status, 'deletePending');
+  assert.equal(pending.displayedRevision, 0);
+  assert.equal(pending.editLease, undefined);
+
+  // Голоса после начала удаления тоже не принимаются.
+  assert.equal(await store.vote(key, {
+    id: 'callback-after-delete',
+    uuid,
+    mid: 'mid.test',
+    uid: '81',
+    at: 300,
+    action: 'yes',
+    name: 'Другой тест'
+  }, () => ({text: 'OK'})), false);
+
+  assert.equal(await store.finishDelete(key, uuid, 'mid.test'), true);
+  assert.equal((await store.read(key)).status, 'deleted');
+});
