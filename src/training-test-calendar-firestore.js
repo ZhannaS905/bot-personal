@@ -5,6 +5,7 @@ const {createHash,randomUUID}=require('node:crypto');
 const {workoutKey}=require('./fitpp-calendar-poll-plan');
 const {resolveClient}=require('./fitpp-calendar-booking-link');
 const {bookingId,bookingRecord}=require('./fitpp-calendar-booking');
+const {bookingChanges}=require('./fitpp-calendar-booking-reconcile');
 const {CHAT}=require('./training-test-firestore');
 const ROOT='trainingTestCalendarPolls';
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -48,6 +49,18 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
    await validateAuth();
    return snap.docs.map(doc=>validate(doc.data(),botId,doc.id));
   },
+  async listPendingBookingSync() {
+    await validateAuth();
+    const collection = sdk.collection(raw, ROOT, botId, 'polls');
+    const query = sdk.query(
+      collection,
+      sdk.where('bookingSyncPending', '==', true)
+    );
+    const snap = await sdk.getDocsFromServer(query);
+    await validateAuth();
+    return snap.docs.map(doc => validate(doc.data(), botId, doc.id));
+  },
+
   async listPendingDeletes(){
    await validateAuth();
    const collection=sdk.collection(raw,ROOT,botId,'polls');
@@ -62,7 +75,7 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
    return tx(key,({p,set})=>{
     if(p)return false; // No automatic resend after an uncertain send.
     set({version:1,botId,chat:CHAT,key,id:candidate.id,createdAt:candidate.createdAt,workout:structuredClone(workout),
-     status:'reserved',mid:null,votes:{},last:{},lastEventUid:null,order:[],revision:0,displayedRevision:0});return true;
+     status:'reserved',mid:null,votes:{},last:{},lastEventUid:null,order:[],revision:0,displayedRevision:0,bookingSyncedRevision:0,bookingSyncedClients:{},bookingSyncPending:false});return true;
    });
   },
   async finish(key,id,mid){if(!MID.test(mid))throw Error('CALENDAR_POLL_MID_REFUSED');return tx(key,({p,set})=>{
@@ -111,28 +124,78 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
     const receipt=await transaction.get(receiptRef),digest=hash(event);
     if(receipt.exists()){if(receipt.data().digest!==digest)throw Error('CALENDAR_POLL_EVENT_CONFLICT');return false}
     if(p?.status!=='published'||p.cancelled===true||p.id!==event.uuid||p.mid!==event.mid||event.at<=(p.last[event.uid]??-1))return false;
-    let clientId=null;
-    if(bookingSyncEnabled()){
-      const bindingsRef=sdk.doc(raw,bindingsPath);
-      const bindingsSnap=await transaction.get(bindingsRef);
-      if(!bindingsSnap.exists())throw Error('CALENDAR_BOOKING_BINDINGS_MISSING');
-      clientId=resolveClient(bindingsSnap.data(),event.uid,botId);
-    }
     const next=structuredClone(p);next.last[event.uid]=event.at;next.lastEventUid=event.uid;
     if(event.action==='cancel'){delete next.votes[event.uid];next.order=next.order.filter(uid=>uid!==event.uid)}
     else{if(typeof event.name!=='string'||event.name.length>100)throw Error('CALENDAR_POLL_EVENT_REFUSED');
      if(!Object.hasOwn(next.votes,event.uid))next.order.push(event.uid);next.votes[event.uid]=event.name}
     if(Array.from(render(next).text).length>4000)return false;
-    if(clientId){
-      if(!writeEnabled())throw Error('CALENDAR_POLL_WRITES_DISABLED');
-      const id=bookingId(p.workout.id,clientId);
-      const bookingRef=sdk.doc(raw,bookingPrefix+id);
-      const record=bookingRecord(p.workout,clientId,event.action==='yes',event.uid,p.revision+1);
-      transaction.set(bookingRef,record);
-    }
-    next.revision++;set(next);transaction.set(receiptRef,{digest,at:event.at});return true;
+    next.revision++;next.bookingSyncPending=true;set(next);transaction.set(receiptRef,{digest,at:event.at});return true;
    });
   },
+  async syncBookings(key) {
+    if (!bookingSyncEnabled()) return false;
+
+    return tx(key, async ({transaction, p, set}) => {
+      if (!p || !['published', 'deletePending', 'deleted'].includes(p.status)) {
+        return false;
+      }
+
+      const syncedRevision = p.bookingSyncedRevision ?? 0;
+      const syncedClients = p.bookingSyncedClients ?? {};
+
+      if (syncedRevision === p.revision) return false;
+
+      const bindingsSnap = await transaction.get(sdk.doc(raw, bindingsPath));
+      if (!bindingsSnap.exists()) {
+        throw Error('CALENDAR_BOOKING_BINDINGS_MISSING');
+      }
+
+      const registry = bindingsSnap.data();
+      const resolved = new Map();
+      let unresolved = false;
+
+      for (const uid of Object.keys(p.votes)) {
+        const clientId = resolveClient(registry, uid, botId);
+        resolved.set(uid, clientId);
+        if (!clientId) unresolved = true;
+      }
+
+      const {changes, nextClients} = bookingChanges(
+        p,
+        syncedClients,
+        uid => resolved.has(uid)
+          ? resolved.get(uid)
+          : resolveClient(registry, uid, botId)
+      );
+
+      if (!writeEnabled()) throw Error('CALENDAR_POLL_WRITES_DISABLED');
+
+      for (const change of changes) {
+        const id = bookingId(p.workout.id, change.clientId);
+        const bookingRef = sdk.doc(raw, bookingPrefix + id);
+        const record = bookingRecord(
+          p.workout,
+          change.clientId,
+          change.booked,
+          change.uid,
+          p.revision
+        );
+        transaction.set(bookingRef, record);
+      }
+
+      set({
+        ...p,
+        bookingSyncedRevision: unresolved
+          ? syncedRevision
+          : p.revision,
+        bookingSyncedClients: nextClients,
+        bookingSyncPending: unresolved
+      });
+
+      return true;
+    });
+  },
+
   async syncWorkout(key, workout) {
     if (!workout || workoutKey(workout) !== key ||
         typeof workout.cancelled !== 'boolean') {

@@ -244,7 +244,7 @@ class Autopost{
           render: require('./training-test-calendar-body').calendarPollBody
         })
       : null;
-    this.tail=Promise.resolve();this.stopped=false;this.startedAt=+now();this.lastTick=this.startedAt;
+    this.tail=Promise.resolve();this.stopped=false;this.startedAt=+now();this.lastTick=this.startedAt;this.lastBookingSync=0;this.lastCalendarMaintenance=0;this.lastCalendarCleanupDate=null;
  }
  run(job){const next=this.tail.then(()=>{if(!this.stopped)return job()});this.tail=next.catch(()=>{});return next}
  async publishCalendar(workout) {
@@ -315,10 +315,34 @@ class Autopost{
   try{const mid=await this.api.send(p);await this.store.finish(date,p.id,mid);this.log('Training Test: scheduled poll published.')}
   catch{await this.store.uncertain(date,p.id);this.log('Training Test: publication uncertain; automatic retry blocked; inspect MAX and Firestore.')}
  }
+ async syncPendingBookings() {
+  if (!this.calendarMode || !this.calendarPollStore) return 0;
+
+  const pending = await this.calendarPollStore.listPendingBookingSync();
+  let completed = 0;
+
+  for (const poll of pending) {
+    try {
+      if (await this.calendarPollStore.syncBookings(poll.key)) {
+        completed++;
+      }
+    } catch {
+      this.log('Training Test: deferred booking sync failed; retry later.');
+    }
+  }
+
+  return completed;
+ }
+
  tick(){return this.run(async()=>{
   const now=this.now(),t=moscow(now),due=Date.parse(t.date+'T10:00:00+03:00'),previous=this.lastTick;this.lastTick=+now;
   if (this.calendarMode) {
-    if (+now >= due) {
+    const hour = new Date(+now + 3 * 3600000).getUTCHours();
+    const planDue = hour >= 10 && hour < 23 &&
+      ((previous < due && +now >= due) ||
+       (+now - (this.lastCalendarPlan || 0) >= 60 * 60 * 1000));
+    if (planDue) {
+      this.lastCalendarPlan = +now;
       const plan = await this.calendarPlan();
       for (const workout of plan) {
         if (workout.publishDue) {
@@ -331,10 +355,32 @@ class Autopost{
     await this.publish(t.date);
   }
   if (this.calendarMode) {
+    const moscowHour = new Date(+now + 3 * 3600000).getUTCHours();
+    const daytime = moscowHour >= 10 && moscowHour < 23;
+    const maintenanceDue =
+      +now - this.lastCalendarMaintenance >= 60 * 60 * 1000;
+
+    const deleteDue = moscowHour === 22 &&
+      (previous < Date.parse(t.date + 'T22:00:00+03:00')) &&
+      (+now >= Date.parse(t.date + 'T22:00:00+03:00'));
+
+    if (!daytime || (!maintenanceDue && !deleteDue)) return;
+
+    this.lastCalendarMaintenance = +now;
+
     const publishedPolls = await this.calendarPollStore.listPublished();
     const remainingPolls = await this.cleanupCalendarPolls(publishedPolls);
     await this.resumeCalendarDeletes();
     await this.refreshCalendarPolls(remainingPolls);
+
+    if (+now - this.lastBookingSync >= 60 * 60 * 1000) {
+      this.lastBookingSync = +now;
+      try {
+        await this.syncPendingBookings();
+      } catch {
+        this.log('Training Test: booking sync queue failed; retry later.');
+      }
+    }
     return;
   } // CALENDAR_REFRESH_TICK
   if(!times[t.day]||t.date===POLL.date||+this.now()>=closesAt(t.date))return;
@@ -515,6 +561,28 @@ class Autopost{
      return this.run(async () => {
        const result = await this.calendarCallbacks.receive(u);
        if (!result?.handled) return false;
+       if (result.applied === true) {
+         const key = u.callback.payload.split(':')[1];
+         try {
+           const claimed = await this.calendarPollStore.claimEdit(key);
+           if (claimed) {
+             const token = claimed.editLease.token;
+             try {
+               await this.api.editCalendar(claimed, {
+                 beforePut: () => this.calendarPollStore.checkEdit(key, token)
+               });
+               await this.calendarPollStore.finishEdit(
+                 key, token, claimed.revision
+               );
+             } catch (error) {
+               await this.calendarPollStore.releaseEdit(key, token);
+               throw error;
+             }
+           }
+         } catch {
+           this.log('Training Test: immediate poll refresh failed; retry later.');
+         }
+       }
 
        try {
          if (this.api.answer) {

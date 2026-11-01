@@ -107,12 +107,11 @@ test('booking sync remains disabled by default', async () => {
   );
 });
 
-test('enabled booking sync requires existing MAX bindings', async () => {
+
+test('missing MAX bindings do not block vote; deferred sync retries', async () => {
   const db = database();
   const store = createCalendarPollStore({
-    sdk: db.sdk,
-    raw: db.raw,
-    botId: '131384398',
+    sdk: db.sdk, raw: db.raw, botId: '131384398',
     validateAuth: async () => {},
     writeEnabled: () => true,
     bookingSyncEnabled: () => true
@@ -121,48 +120,38 @@ test('enabled booking sync requires existing MAX bindings', async () => {
   await store.reserve(workout, {id: uuid, createdAt: 100});
   await store.finish(key, uuid, 'mid.test');
 
-  const before = await store.read(key);
-  const commitsBefore = db.commits.length;
+  assert.equal(await store.vote(key, {
+    id: 'callback-no-bindings', uuid, mid: 'mid.test',
+    uid: '80', at: 200, action: 'yes', name: 'Тест'
+  }, () => ({text: 'OK'})), true);
+
+  const poll = await store.read(key);
+  assert.equal(poll.votes['80'], 'Тест');
+  assert.equal(poll.bookingSyncPending, true);
 
   await assert.rejects(
-    store.vote(key, {
-      id: 'callback-no-bindings',
-      uuid,
-      mid: 'mid.test',
-      uid: '80',
-      at: 200,
-      action: 'yes',
-      name: 'Тест'
-    }, () => ({text: 'OK'})),
+    store.syncBookings(key),
     /CALENDAR_BOOKING_BINDINGS_MISSING/
   );
-
-  assert.deepEqual(await store.read(key), before);
-  assert.equal(db.commits.length, commitsBefore);
+  assert.equal((await store.read(key)).bookingSyncPending, true);
 });
 
-test('enabled booking sync accepts an existing MAX client binding', async () => {
-  const db = database();
 
-  db.data.set(
-    'fitppTestWorkspaces/synthetic-v1/notificationBindings/training-test',
-    {
-      version: 1,
-      botId: 131384398,
-      bindings: [{
-        clientId: 'demo-client-1',
-        maxUserId: 80,
-        maxChatId: 80,
-        notificationsEnabled: true,
-        recoverNotifications: true
-      }]
-    }
-  );
+test('MAX vote does not read bindings; deferred sync reads them', async () => {
+  const db = database();
+  const bindingsPath =
+    'fitppTestWorkspaces/synthetic-v1/notificationBindings/training-test';
+
+  db.data.set(bindingsPath, {
+    version: 1, botId: 131384398,
+    bindings: [{
+      clientId: 'demo-client-1', maxUserId: 80, maxChatId: 80,
+      notificationsEnabled: true, recoverNotifications: true
+    }]
+  });
 
   const store = createCalendarPollStore({
-    sdk: db.sdk,
-    raw: db.raw,
-    botId: '131384398',
+    sdk: db.sdk, raw: db.raw, botId: '131384398',
     validateAuth: async () => {},
     writeEnabled: () => true,
     bookingSyncEnabled: () => true
@@ -171,48 +160,34 @@ test('enabled booking sync accepts an existing MAX client binding', async () => 
   await store.reserve(workout, {id: uuid, createdAt: 100});
   await store.finish(key, uuid, 'mid.test');
 
-  const result = await store.vote(key, {
-    id: 'callback-linked-client',
-    uuid,
-    mid: 'mid.test',
-    uid: '80',
-    at: 200,
-    action: 'yes',
-    name: 'Тест'
-  }, () => ({text: 'OK'}));
+  assert.equal(await store.vote(key, {
+    id: 'callback-linked-client', uuid, mid: 'mid.test',
+    uid: '80', at: 200, action: 'yes', name: 'Тест'
+  }, () => ({text: 'OK'})), true);
 
-  assert.equal(result, true);
   assert.equal((await store.read(key)).votes['80'], 'Тест');
+  assert.equal(db.paths.includes(bindingsPath), false);
 
-  assert(
-    db.paths.includes(
-      'fitppTestWorkspaces/synthetic-v1/notificationBindings/training-test'
-    )
-  );
+  assert.equal(await store.syncBookings(key), true);
+  assert.equal(db.paths.includes(bindingsPath), true);
 });
 
-test('MAX yes creates booking for the linked FitPP client', async () => {
-  const db = database();
 
+test('deferred sync creates booking for linked FitPP client', async () => {
+  const db = database();
   db.data.set(
     'fitppTestWorkspaces/synthetic-v1/notificationBindings/training-test',
     {
-      version: 1,
-      botId: 131384398,
+      version: 1, botId: 131384398,
       bindings: [{
-        clientId: 'demo-client-1',
-        maxUserId: 80,
-        maxChatId: 80,
-        notificationsEnabled: true,
-        recoverNotifications: true
+        clientId: 'demo-client-1', maxUserId: 80, maxChatId: 80,
+        notificationsEnabled: true, recoverNotifications: true
       }]
     }
   );
 
   const store = createCalendarPollStore({
-    sdk: db.sdk,
-    raw: db.raw,
-    botId: '131384398',
+    sdk: db.sdk, raw: db.raw, botId: '131384398',
     validateAuth: async () => {},
     writeEnabled: () => true,
     bookingSyncEnabled: () => true
@@ -220,26 +195,21 @@ test('MAX yes creates booking for the linked FitPP client', async () => {
 
   await store.reserve(workout, {id: uuid, createdAt: 100});
   await store.finish(key, uuid, 'mid.test');
-
   await store.vote(key, {
-    id: 'callback-booking-yes',
-    uuid,
-    mid: 'mid.test',
-    uid: '80',
-    at: 200,
-    action: 'yes',
-    name: 'Тест'
+    id: 'callback-booking-yes', uuid, mid: 'mid.test',
+    uid: '80', at: 200, action: 'yes', name: 'Тест'
   }, () => ({text: 'OK'}));
 
   const {bookingId} = require('../src/fitpp-calendar-booking');
-
-  const path =
+  const bookingPath =
     'fitppTestWorkspaces/synthetic-v1/calendarBookings/' +
     bookingId(workout.id, 'demo-client-1');
 
-  const booking = db.data.get(path);
+  assert.equal(db.data.has(bookingPath), false);
+  assert.equal(await store.syncBookings(key), true);
 
-  assert.ok(booking, 'Запись FitPP должна существовать');
+  const booking = db.data.get(bookingPath);
+  assert.ok(booking);
   assert.equal(booking.workoutId, workout.id);
   assert.equal(booking.clientId, 'demo-client-1');
   assert.equal(booking.booked, true);
@@ -249,28 +219,22 @@ test('MAX yes creates booking for the linked FitPP client', async () => {
   assert.equal((await store.read(key)).votes['80'], 'Тест');
 });
 
-test('MAX cancel removes the linked client booking', async () => {
-  const db = database();
 
+test('deferred sync cancels previously created FitPP booking', async () => {
+  const db = database();
   db.data.set(
     'fitppTestWorkspaces/synthetic-v1/notificationBindings/training-test',
     {
-      version: 1,
-      botId: 131384398,
+      version: 1, botId: 131384398,
       bindings: [{
-        clientId: 'demo-client-1',
-        maxUserId: 80,
-        maxChatId: 80,
-        notificationsEnabled: true,
-        recoverNotifications: true
+        clientId: 'demo-client-1', maxUserId: 80, maxChatId: 80,
+        notificationsEnabled: true, recoverNotifications: true
       }]
     }
   );
 
   const store = createCalendarPollStore({
-    sdk: db.sdk,
-    raw: db.raw,
-    botId: '131384398',
+    sdk: db.sdk, raw: db.raw, botId: '131384398',
     validateAuth: async () => {},
     writeEnabled: () => true,
     bookingSyncEnabled: () => true
@@ -278,35 +242,28 @@ test('MAX cancel removes the linked client booking', async () => {
 
   await store.reserve(workout, {id: uuid, createdAt: 100});
   await store.finish(key, uuid, 'mid.test');
-
   const render = () => ({text: 'OK'});
 
   await store.vote(key, {
-    id: 'callback-yes',
-    uuid,
-    mid: 'mid.test',
-    uid: '80',
-    at: 200,
-    action: 'yes',
-    name: 'Тест'
+    id: 'callback-yes', uuid, mid: 'mid.test',
+    uid: '80', at: 200, action: 'yes', name: 'Тест'
   }, render);
+
+  assert.equal(await store.syncBookings(key), true);
 
   await store.vote(key, {
-    id: 'callback-cancel',
-    uuid,
-    mid: 'mid.test',
-    uid: '80',
-    at: 300,
-    action: 'cancel'
+    id: 'callback-cancel', uuid, mid: 'mid.test',
+    uid: '80', at: 300, action: 'cancel'
   }, render);
 
+  assert.equal(await store.syncBookings(key), true);
+
   const {bookingId} = require('../src/fitpp-calendar-booking');
-  const path =
+  const bookingPath =
     'fitppTestWorkspaces/synthetic-v1/calendarBookings/' +
     bookingId(workout.id, 'demo-client-1');
 
-  const booking = db.data.get(path);
-
+  const booking = db.data.get(bookingPath);
   assert.ok(booking);
   assert.equal(booking.booked, false);
   assert.equal(booking.maxUserId, '80');
@@ -317,6 +274,7 @@ test('MAX cancel removes the linked client booking', async () => {
   const poll = await store.read(key);
   assert.equal(Object.hasOwn(poll.votes, '80'), false);
   assert.equal(poll.revision, 2);
+  assert.equal(poll.bookingSyncPending, false);
 });
 
 test('failed booking write rolls back MAX vote and receipt', async () => {
@@ -427,4 +385,32 @@ test('pending deletion blocks completion of an earlier edit', async () => {
 
   assert.equal(await store.finishDelete(key, uuid, 'mid.test'), true);
   assert.equal((await store.read(key)).status, 'deleted');
+});
+
+test('new calendar poll starts with zero booking sync revision', async () => {
+  const {store} = setup();
+
+  await store.reserve(workout, {id: uuid, createdAt: 100});
+
+  const poll = await store.read(key);
+
+  assert.equal(poll.bookingSyncedRevision, 0);
+  assert.equal(poll.revision, 0);
+});
+
+test('legacy calendar poll without booking sync revision remains readable', async () => {
+  const {db, store} = setup();
+
+  await store.reserve(workout, {id: uuid, createdAt: 100});
+  await store.finish(key, uuid, 'mid.test');
+
+  const path = `trainingTestCalendarPolls/131384398/polls/${key}`;
+  const legacy = {...db.data.get(path)};
+  delete legacy.bookingSyncedRevision;
+  db.data.set(path, legacy);
+
+  const poll = await store.read(key);
+
+  assert.equal(poll.status, 'published');
+  assert.equal(poll.bookingSyncedRevision ?? 0, 0);
 });
