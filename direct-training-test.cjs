@@ -11,9 +11,18 @@ async function main({env=process.env}={}) {
    const load=require('node:module').createRequire(require('node:path').join(__dirname,'direct-sdk/package.json'));
    return {...load('firebase/app'),...load('firebase/auth'),...load('firebase/firestore')};
   });
-  const tracedSdk=env.FITPP_TRACE_WRITES==='true'
-    ?require('./firestore-write-counter.local-debug.cjs').wrapSdk(sdk)
-    :sdk;
+  let tracedSdk=sdk;
+  if(env.FITPP_TRACE_WRITES==='true'){
+    try {
+      tracedSdk=require('./firestore-write-counter.local-debug.cjs').wrapSdk(sdk);
+      console.log('FITPP_TRACE_LOADED');
+    } catch(error) {
+      console.error('FITPP_TRACE_LOAD_FAILED code='+(
+        error?.code==='MODULE_NOT_FOUND'?'MODULE_NOT_FOUND':'OTHER'
+      ));
+      throw error;
+    }
+  }
   prepared=await at('RUNTIME_PREPARE',()=>require('./src/fitpp-direct-runtime').prepare({env,sdk:tracedSdk}));
   autopost=await at('AUTOPOST_PREPARE',()=>autopostModule.prepare({env,storeFactory:prepared.autopostStore,booking:prepared.dailyBooking,calendarPollStoreFactory:prepared.calendarPollStore,calendarStore:prepared.calendarStore,calendarDb:prepared.calendarDb}));
   const server=await at('BRIDGE_START',()=>require('./src/fitpp-test-bridge').main({...prepared,autopost}));
