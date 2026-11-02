@@ -76,8 +76,8 @@ test('votes remain open during 60-minute training then close; foreign users/mess
  for(const mutate of [u=>{u.message.body.mid='mid.foreign'},u=>{u.message.recipient.chat_id='-1'},u=>{u.callback.user.is_bot=true},u=>{u.callback.timestamp-=86400001}]){const u=callback(p);mutate(u);await f.s.receive(u);assert.deepEqual((await f.s.store.read(p.date)).votes,{})}
  f.time('2026-11-02T17:30:00Z');await f.s.receive(callback(p,'during','yes',Date.parse('2026-11-02T17:30:00Z')));f.time('2026-11-02T18:00:00Z');await f.s.receive(callback(p,'closed','cancel',Date.parse('2026-11-02T18:00:00Z')));assert.equal(Object.keys((await f.s.store.read(p.date)).votes).length,1);
 });
-test('120000ms scheduler avoids backlog; FitPP/contact traffic bypasses publication queue',async t=>{
- const f=fixture(t);let interval,cancelled=false;const stop=attach(f.s,{schedule(fn,ms){interval={fn,ms};return 1},cancel(){cancelled=true}});assert.equal(interval.ms,120000);let release;const pending=f.s.run(()=>new Promise(r=>release=r));await new Promise(r=>setImmediate(r));assert.equal(await f.s.receive({update_type:'bot_started'}),false);assert.equal(await f.s.receive(callback({...POLL,id:POLL.uuid})),false);release();await pending;await stop();assert(cancelled);
+test('300000ms scheduler avoids backlog; FitPP/contact traffic bypasses publication queue',async t=>{
+ const f=fixture(t);let interval,cancelled=false;const stop=attach(f.s,{schedule(fn,ms){interval={fn,ms};return 1},cancel(){cancelled=true}});assert.equal(interval.ms,300000);let release;const pending=f.s.run(()=>new Promise(r=>release=r));await new Promise(r=>setImmediate(r));assert.equal(await f.s.receive({update_type:'bot_started'}),false);assert.equal(await f.s.receive(callback({...POLL,id:POLL.uuid})),false);release();await pending;await stop();assert(cancelled);
 });
 function rawFixture(){
  const requests=[],p={id:'a'.repeat(8)+'-aaaa-aaaa-aaaa-'+ 'a'.repeat(12),date:'2026-11-02',votes:{},order:[],mid:'mid.test',status:'published'};
@@ -217,4 +217,44 @@ test('calendar deletion allows only bot-owned messages in test chat', async () =
       0
     );
   }
+});
+
+test('shutdown drains accepted work and refuses new queued work',async()=>{
+ const calls=[];
+ let release,started;
+ const gate=new Promise(resolve=>{release=resolve});
+ const entered=new Promise(resolve=>{started=resolve});
+
+ const service=new Autopost({
+  store:{close:async()=>{calls.push('store-close')}},
+  api:{},
+  now:()=>new Date('2026-11-02T08:00:00Z')
+ });
+
+ const first=service.run(async()=>{
+  calls.push('first-start');
+  started();
+  await gate;
+  calls.push('first-finish');
+ });
+
+ await entered;
+ const accepted=service.run(()=>calls.push('accepted-before-close'));
+ const closing=service.close();
+ const late=service.run(()=>calls.push('late-after-close'));
+
+ try{
+  release();
+  await Promise.all([first,accepted,late,closing]);
+  await service.run(()=>calls.push('after-store-close'));
+
+  assert.deepEqual(calls,[
+   'first-start',
+   'first-finish',
+   'accepted-before-close',
+   'store-close'
+  ]);
+ }finally{
+  release();
+ }
 });

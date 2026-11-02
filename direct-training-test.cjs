@@ -45,9 +45,38 @@ async function main({env=process.env}={}) {
   }
   prepared=await at('RUNTIME_PREPARE',()=>require('./src/fitpp-direct-runtime').prepare({env,sdk:tracedSdk}));
   autopost=await at('AUTOPOST_PREPARE',()=>autopostModule.prepare({env,storeFactory:prepared.autopostStore,booking:prepared.dailyBooking,calendarPollStoreFactory:prepared.calendarPollStore,calendarStore:prepared.calendarStore,calendarDb:prepared.calendarDb}));
-  const server=await at('BRIDGE_START',()=>require('./src/fitpp-test-bridge').main({...prepared,autopost}));
+  const server=await at('CALENDAR_SERVER_START',()=>require('./src/training-test-http-server').start({
+    autopost,
+    contact:prepared.contact,
+    secret:env.WEBHOOK_SECRET,
+    env
+  }));
+  // Graceful shutdown: supervisor gives this process 10 seconds.
+  let stopping=false;
+  const stop=()=>{
+    if(stopping)return;
+    stopping=true;
+    server.closeIdleConnections?.();
+    server.close();
+  };
+
+  if(typeof process.once==='function'){
+    process.once('SIGTERM',stop);
+    process.once('SIGINT',stop);
+    server.once('close',()=>{
+      process.removeListener('SIGTERM',stop);
+      process.removeListener('SIGINT',stop);
+    });
+  }
+
   // Drain Firestore work before closing the shared authenticated session.
-  server.once('close',()=>void (async()=>{if(autopost)await autopost.close();await prepared.close()})().catch(()=>console.error('DIRECT_CLOSE_FAILED')));
+  server.once('close',()=>void (async()=>{
+    try {
+      await server.stopAutopost();
+    } finally {
+      await prepared.close();
+    }
+  })().catch(()=>console.error('DIRECT_CLOSE_FAILED')));
   return server;
  } catch(error) {
   // Best-effort cleanup must neither replace the original diagnosis nor leak SDK errors.

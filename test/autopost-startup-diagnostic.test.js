@@ -17,7 +17,7 @@ function fixture({stage='AUTOPOST_FIRST_READ',code='permission-denied',cleanupFa
   if(id==='node:path')return path;
   if(id==='node:module')return {createRequire:()=>()=>{if(stage==='SDK_LOAD')throw failure(code);return {}}};
   if(id==='./src/fitpp-direct-runtime')return {async prepare(){calls.push('runtime');if(stage==='RUNTIME_PREPARE')throw diagnostic.mark(failure(code),'CONNECT');return prepared}};
-  if(id==='./src/fitpp-test-bridge')return {async main(){calls.push('bridge');if(stage==='BRIDGE_START')throw failure(code);return {once(){}}}};
+  if(id==='./src/training-test-http-server')return {async start(){calls.push('calendar-server');if(stage==='CALENDAR_SERVER_START')throw failure(code);return {once(){}}}};
   throw Error('Unexpected import');
  };
  fakeRequire.main=cli?module:{};
@@ -27,11 +27,11 @@ function fixture({stage='AUTOPOST_FIRST_READ',code='permission-denied',cleanupFa
 for(const code of ['permission-denied','firestore/permission-denied','unauthenticated','unavailable','deadline-exceeded','failed-precondition','invalid-argument','resource-exhausted','aborted']){
  test('actual prepare and entrypoint preserve first Firestore read code '+code,async()=>{
   const f=fixture({code});await assert.rejects(f.run(),error=>diagnostic.format(error)==='stage=AUTOPOST_FIRST_READ reason='+code.replace(/^firestore\//,''));
-  assert.equal(f.calls.filter(x=>x==='read').length,1);assert(f.calls.includes('session-close'));assert(!f.calls.includes('bridge'));assert.equal(f.logs.length,0);
+  assert.equal(f.calls.filter(x=>x==='read').length,1);assert(f.calls.includes('session-close'));assert(!f.calls.includes('calendar-server'));assert.equal(f.logs.length,0);
  });
 }
 test('configuration, SDK, identity, store factory and runtime have distinct safe stages',async()=>{
- for(const [stage,code,expected]of [['SETTINGS','auth/invalid-credential','SETTINGS'],['AUTOPOST_SETTINGS','permission-denied','AUTOPOST_SETTINGS'],['SDK_LOAD','MODULE_NOT_FOUND','SDK_LOAD'],['AUTOPOST_MAX_IDENTITY','ECONNRESET','AUTOPOST_MAX_IDENTITY'],['AUTOPOST_STORE_FACTORY','permission-denied','AUTOPOST_STORE_FACTORY'],['RUNTIME_PREPARE','unauthenticated','CONNECT'],['BRIDGE_START','ECONNRESET','BRIDGE_START']]){
+ for(const [stage,code,expected]of [['SETTINGS','auth/invalid-credential','SETTINGS'],['AUTOPOST_SETTINGS','permission-denied','AUTOPOST_SETTINGS'],['SDK_LOAD','MODULE_NOT_FOUND','SDK_LOAD'],['AUTOPOST_MAX_IDENTITY','ECONNRESET','AUTOPOST_MAX_IDENTITY'],['AUTOPOST_STORE_FACTORY','permission-denied','AUTOPOST_STORE_FACTORY'],['RUNTIME_PREPARE','unauthenticated','CONNECT'],['CALENDAR_SERVER_START','ECONNRESET','CALENDAR_SERVER_START']]){
   const f=fixture({stage,code});await assert.rejects(f.run(),error=>diagnostic.format(error)===`stage=${expected} reason=${code}`);
  }
 });
@@ -49,5 +49,5 @@ test('unknown errors, forged diagnostics and unsafe code suffixes cannot cross t
  const safe=diagnostic.mark(failure('permission-denied'),'AUTOPOST_FIRST_READ');safe.stage=secret;safe.reason=secret;safe.message=secret;assert.equal(diagnostic.format(safe),'stage=AUTOPOST_FIRST_READ reason=permission-denied');
 });
 test('disabled autopost does not create a store, read Firestore or request MAX',async()=>{
- const f=fixture({disabled:true});await f.run();assert.deepEqual(f.calls,['runtime','bridge']);assert.equal(f.logs.length,0);
+ const f=fixture({disabled:true});await f.run();assert.deepEqual(f.calls,['runtime','calendar-server']);assert.equal(f.logs.length,0);
 });

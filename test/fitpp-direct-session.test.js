@@ -50,9 +50,17 @@ test('client session defaults to no writes and refuses identity loss',async()=>{
  f.auth.currentUser=null;await assert.rejects(()=>s.db.doc('fitppTestWorkspaces/synthetic-v1/states/main').get(),/BOT_AUTH/);
  await s.close();assert.deepEqual(f.calls,['init','login','logout','terminate','delete']);
 });
-test('composition refuses closed poll before login',async()=>{
- const f=fixture();await assert.rejects(()=>prepare({env:{...env(),FITPP_BRIDGE_ENABLED:'true',FITPP_BRIDGE_HMAC_KEY:'a'.repeat(64),CHAT_IDS:'-80345864298680',FITPP_BRIDGE_SCOPE:JSON.stringify({chat:'-80345864298680',user:'5819064',mid:'mid.ffffb6ed054c9f4801a169a000563611',uuid:'99732d34-b609-4266-9418-f12de9b3fe62'}),FITPP_DIRECT_POLL_OPENED_AT:'1792880000000'},sdk:f.sdk,now:()=>Date.parse('2026-10-27')}),/POLL_CLOSED/);assert.deepEqual(f.calls,[]);
+test('calendar preparation works after historical single-poll closure',async()=>{
+ const f=fixture();
+ const session=await prepare({
+  env:env(),
+  sdk:f.sdk,
+  now:()=>Date.parse('2026-11-02')
+ });
+ await session.close();
+ assert.deepEqual(f.calls,['init','login','logout','terminate','delete']);
 });
+
 test('existing test account uses memory auth and credentials only for SDK login',async()=>{
  const f=fixture();let received;
  f.sdk.initializeAuth=(app,options)=>{assert.equal(options.persistence,f.sdk.inMemoryPersistence);assert.equal(app.options.projectId,'fitpp-test');return f.auth};
@@ -95,27 +103,36 @@ test('full preparation succeeds with SDK-shaped transaction snapshots and no wri
  const f=fullFixture(),s=await prepare({env:fullConfig(),sdk:f.sdk,now:()=>Date.parse('2026-10-25')});await s.close();
  assert.deepEqual(f.calls,['init','login','logout','terminate','delete']);
 });
-test('deadline reached during login or transaction refuses preparation and closes session',async()=>{
- for(const stage of ['login','transaction']){
-  const f=fullFixture();let time=Date.parse('2026-10-25');
-  const method=stage==='login'?'signInWithEmailAndPassword':'runTransaction',original=f.sdk[method];
-  f.sdk[method]=async(...args)=>{const result=await original(...args);time=POLL.closesAt;return result};
-  await assert.rejects(()=>prepare({env:fullConfig(),sdk:f.sdk,now:()=>time}),e=>format(e)==='stage=POLL_TIME reason=POLL_CLOSED');
-  assert.deepEqual(f.calls.slice(-3),['logout','terminate','delete']);
- }
+test('calendar preparation failure closes authenticated Firebase session',async()=>{
+ const f=fullFixture();
+ const config={
+  ...fullConfig(),
+  TRAINING_TEST_AUTOPOST_ENABLED:'true',
+  TEST_EXPECTED_BOT_ID:'invalid-bot-id'
+ };
+
+ await assert.rejects(
+  ()=>prepare({env:config,sdk:f.sdk}),
+  /DAILY_TEST_BOT_REQUIRED/
+ );
+ assert.deepEqual(f.calls,['init','login','logout','terminate','delete']);
 });
-test('preparation distinguishes bridge settings, metadata, missing documents and denied reads safely',async()=>{
- for(const mode of ['bridge','metadata','missing','denied','commit','unknown']){
-  const f=fullFixture(),config=fullConfig();let expected;
-  if(mode==='bridge'){config.FITPP_BRIDGE_SCOPE='private-token';expected='stage=BRIDGE_SETTINGS reason=INVALID_JSON'}
-  if(mode==='metadata'){f.data.bookings.schemaVersion=2;expected='stage=POLL_VIEW reason=POLL_VIEW_METADATA'}
-  if(mode==='missing'){delete f.data.bookingClock;expected='stage=POLL_VIEW reason=POLL_VIEW_MISSING'}
-  if(mode==='denied'||mode==='unknown'){f.sdk.runTransaction=async(_,fn)=>fn({get:async()=>{throw Object.assign(Error('private-token bot@example.invalid'),{code:mode==='denied'?'permission-denied':'private-token'})}});expected='stage=READ_MAIN reason='+(mode==='denied'?'permission-denied':'UNKNOWN')}
-  if(mode==='commit'){f.sdk.runTransaction=async()=>{throw Object.assign(Error('private-token'),{code:'unavailable'})};expected='stage=POLL_VIEW reason=unavailable'}
-  await assert.rejects(()=>prepare({env:config,sdk:f.sdk,now:()=>Date.parse('2026-10-25')}),e=>format(e)===expected);
-  if(mode==='bridge')assert.deepEqual(f.calls,[]);else assert.deepEqual(f.calls.slice(-3),['logout','terminate','delete']);
- }
+
+test('calendar preparation ignores legacy bridge scope without widening access',async()=>{
+ const f=fullFixture();
+ const config={
+  ...fullConfig(),
+  FITPP_BRIDGE_SCOPE:'invalid legacy scope',
+  FITPP_BRIDGE_HMAC_KEY:'invalid legacy key',
+  FITPP_DIRECT_POLL_OPENED_AT:'invalid legacy timestamp'
+ };
+
+ const session=await prepare({env:config,sdk:f.sdk});
+ await session.close();
+
+ assert.deepEqual(f.calls,['init','login','logout','terminate','delete']);
 });
+
 test('diagnostics never format arbitrary properties or external text',async()=>{
  const {at}=require('../src/fitpp-direct-diagnostic');
  assert.equal(format({stage:'READ_MAIN',reason:'private-token'}),'stage=UNKNOWN reason=UNKNOWN');
@@ -124,11 +141,33 @@ test('diagnostics never format arbitrary properties or external text',async()=>{
  await assert.rejects(()=>connect({env:env(),sdk:f.sdk}),e=>format(e)==='stage=CONNECT reason=auth/invalid-credential');
 });
 
-test('daily autopost can start after historical pilot closure without widening Firebase writes or pilot scope',async()=>{
- const f=fullFixture(),config={...fullConfig(),TEST_BOT_TOKEN:'offline',TEST_EXPECTED_BOT_ID:'123',WEBHOOK_SECRET:'offline_secret_123',TRAINING_TEST_AUTOPOST_ENABLED:'true'};
- const s=await prepare({env:config,sdk:f.sdk,now:()=>POLL.closesAt+86400000});await s.close();
+test('daily autopost works after historical pilot closure and retains test Firebase isolation',async()=>{
+ const config={
+  ...fullConfig(),
+  TEST_BOT_TOKEN:'offline',
+  TEST_EXPECTED_BOT_ID:'123',
+  WEBHOOK_SECRET:'offline_secret_123',
+  TRAINING_TEST_AUTOPOST_ENABLED:'true'
+ };
+
+ const f=fullFixture();
+ const session=await prepare({
+  env:config,
+  sdk:f.sdk,
+  now:()=>POLL.closesAt+86400000
+ });
+ await session.close();
  assert.deepEqual(f.calls,['init','login','logout','terminate','delete']);
- const wrong=fullFixture();await assert.rejects(()=>prepare({env:{...config,FITPP_BRIDGE_SCOPE:JSON.stringify({...POLL,user:USER,mid:'mid.foreign'})},sdk:wrong.sdk,now:()=>POLL.closesAt+86400000}),/EXACT_SCOPE/);assert.deepEqual(wrong.calls,[]);
+
+ for(const project of ['fitpp-crm','fitpp-165a2']){
+  const rejected=fullFixture();
+  await assert.rejects(()=>prepare({
+   env:{...config,FIREBASE_PROJECT_ID:project},
+   sdk:rejected.sdk,
+   now:()=>POLL.closesAt+86400000
+  }));
+  assert.deepEqual(rejected.calls,[]);
+ }
 });
 
 test('autopost uses the existing authenticated SDK session with separate paths and independent writes',async()=>{
