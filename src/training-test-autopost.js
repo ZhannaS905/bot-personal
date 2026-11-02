@@ -343,7 +343,7 @@ class Autopost{
        (+now - (this.lastCalendarPlan || 0) >= 60 * 60 * 1000));
     if (planDue) {
       this.lastCalendarPlan = +now;
-      const plan = await this.calendarPlan();
+      const plan = await at('CALENDAR_LIST', () => this.calendarPlan());
       for (const workout of plan) {
         if (workout.publishDue) {
           await this.publishCalendar(workout);
@@ -368,10 +368,10 @@ class Autopost{
 
     this.lastCalendarMaintenance = +now;
 
-    const publishedPolls = await this.calendarPollStore.listPublished();
+    const publishedPolls = await at('CALENDAR_LIST', () => this.calendarPollStore.listPublished());
     const remainingPolls = await this.cleanupCalendarPolls(publishedPolls);
     await this.resumeCalendarDeletes();
-    await this.refreshCalendarPolls(remainingPolls);
+    await at('CALENDAR_SYNC', () => this.refreshCalendarPolls(remainingPolls));
 
     if (+now - this.lastBookingSync >= 60 * 60 * 1000) {
       this.lastBookingSync = +now;
