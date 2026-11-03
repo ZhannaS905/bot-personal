@@ -559,7 +559,27 @@ class Autopost{
        typeof u?.callback?.payload === 'string' &&
        u.callback.payload.startsWith('cal:')) {
      return this.run(async () => {
-       const result = await this.calendarCallbacks.receive(u);
+       let result;
+       try {
+         result = await this.calendarCallbacks.receive(u);
+       } catch (error) {
+         const allowed = new Set([
+           'CALENDAR_CALLBACK_SCOPE_REFUSED',
+           'CALENDAR_CALLBACK_TIME_REFUSED',
+           'CALENDAR_CALLBACK_POLL_REFUSED',
+           'CALENDAR_CALLBACK_WORKOUT_CHANGED',
+           'CALENDAR_CALLBACK_CLOSED'
+         ]);
+         this.log(
+           'Training Test: calendar callback failed: ' +
+           (allowed.has(error?.message)
+             ? error.message
+             : error?.code === 'permission-denied'
+               ? 'FIRESTORE_PERMISSION_DENIED'
+               : 'UNKNOWN')
+         );
+         throw error;
+       }
        if (!result?.handled) return false;
        if (result.applied === true) {
          const key = u.callback.payload.split(':')[1];
