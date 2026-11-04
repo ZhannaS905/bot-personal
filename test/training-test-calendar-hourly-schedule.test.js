@@ -4,7 +4,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {Autopost} = require('../src/training-test-autopost');
 
-test('calendar checks hourly, deletes at 22:00, rests from 23:00 to 10:00 Moscow', async () => {
+test('calendar refreshes every five minutes, plans hourly, deletes at 22:00, rests from 23:00 to 10:00 Moscow', async () => {
   let time = '2026-11-02T09:59:00+03:00';
   const calls = {plan: 0, published: 0, pending: 0, bookings: 0};
 
@@ -52,9 +52,13 @@ test('calendar checks hourly, deletes at 22:00, rests from 23:00 to 10:00 Moscow
   assert.equal(calls.plan, 1);
   assert.equal(calls.published, 1);
 
+  await tick('2026-11-02T10:05:00+03:00');
+  assert.equal(calls.plan, 1);
+  assert.equal(calls.published, 2);
+
   await tick('2026-11-02T11:00:00+03:00');
   assert.equal(calls.plan, 2);
-  assert.equal(calls.published, 2);
+  assert.equal(calls.published, 3);
 
   await tick('2026-11-02T21:59:00+03:00');
   const beforeDelete = calls.published;

@@ -358,7 +358,7 @@ class Autopost{
     const moscowHour = new Date(+now + 3 * 3600000).getUTCHours();
     const daytime = moscowHour >= 10 && moscowHour < 23;
     const maintenanceDue =
-      +now - this.lastCalendarMaintenance >= 60 * 60 * 1000;
+      +now - this.lastCalendarMaintenance >= 5 * 60 * 1000;
 
     const deleteDue = moscowHour === 22 &&
       (previous < Date.parse(t.date + 'T22:00:00+03:00')) &&
@@ -369,9 +369,10 @@ class Autopost{
     this.lastCalendarMaintenance = +now;
 
     const publishedPolls = await at('CALENDAR_LIST', () => this.calendarPollStore.listPublished());
-    const remainingPolls = await at('CALENDAR_CLEANUP', () => this.cleanupCalendarPolls(publishedPolls));
+    // Resolve moves before applying the deletion deadline from the stored date.
+    const refreshedPolls = await at('CALENDAR_SYNC', () => this.refreshCalendarPolls(publishedPolls));
+    await at('CALENDAR_CLEANUP', () => this.cleanupCalendarPolls(refreshedPolls));
     await at('CALENDAR_DELETE', () => this.resumeCalendarDeletes());
-    await at('CALENDAR_SYNC', () => this.refreshCalendarPolls(remainingPolls));
 
     if (+now - this.lastBookingSync >= 60 * 60 * 1000) {
       this.lastBookingSync = +now;
@@ -483,7 +484,7 @@ class Autopost{
 
     const polls = Array.isArray(prefetchedPolls) ? prefetchedPolls : await at('CALENDAR_LIST', () => this.calendarPollStore.listPublished());
 
-    for (const poll of polls) {
+    for (const [index, poll] of polls.entries()) {
       const key = poll.key;
 
       // Never interpret a missing workout as a cancellation.
@@ -508,6 +509,7 @@ class Autopost{
           current = await this.calendarPollStore.read(key);
         }
       }
+      polls[index] = current || poll;
       if (!current || current.status !== 'published' ||
           current.revision === current.displayedRevision) continue;
 
@@ -540,6 +542,7 @@ class Autopost{
         await this.calendarPollStore.releaseEdit(key, token);
       }
     }
+    return polls;
   }
 
  async publishTodayCalendar() {
