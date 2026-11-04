@@ -62,7 +62,7 @@ for (const action of ['yes', 'cancel']) {
     };
 
     assert.equal(await service.receive(event), true);
-    assert.deepEqual(calls, ['claim', 'edit', 'finish', 'answer']);
+    assert.deepEqual(calls, ['answer', 'claim', 'edit', 'finish']);
 
     applied = false;
     calls.length = 0;
@@ -125,5 +125,5 @@ test('MAX edit failure releases lease and leaves poll for retry', async () => {
   });
 
   assert.equal(handled, true);
-  assert.deepEqual(calls, ['claim', 'check', 'release', 'answer']);
+  assert.deepEqual(calls, ['answer', 'claim', 'check', 'release']);
 });

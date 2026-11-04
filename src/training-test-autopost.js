@@ -586,8 +586,37 @@ class Autopost{
          throw error;
        }
        if (!result?.handled) return false;
+       // Acknowledge before the slow MAX verification/edit sequence. Failure
+       // must never prevent the already committed vote or booking sync.
+       try {
+         if (this.api.answer) await this.api.answer(u.callback.callback_id);
+       } catch (error) {
+         const status = /^MAX HTTP ([1-5][0-9]{2})$/.exec(error?.message || '');
+         this.log('Training Test: calendar callback answer failed; reason=' +
+           (status ? 'MAX_HTTP_' + status[1] :
+             error?.name === 'TimeoutError' || error?.name === 'AbortError'
+               ? 'TIMEOUT_OR_ABORT' : 'UNKNOWN'));
+       }
+
+       const key = u.callback.payload.split(':')[1];
+       // Also drain on redelivery: the receipt may exist after an earlier sync
+       // failure. syncBookings reads the latest revision in one idempotent tx.
+       if (typeof this.calendarPollStore.syncBookings === 'function') {
+         for (let attempt = 0; attempt < 3; attempt++) {
+           try {
+             await this.calendarPollStore.syncBookings(key);
+             break;
+           } catch (error) {
+             this.log('Training Test: immediate booking sync failed; ' +
+               format(mark(error, 'CALENDAR_SYNC')));
+             const code = (error?.code || '').replace(/^firestore\//, '');
+             if (attempt === 2 || !['unavailable', 'deadline-exceeded', 'aborted',
+                 'auth/network-request-failed'].includes(code)) break;
+             await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+           }
+         }
+       }
        if (result.applied === true) {
-         const key = u.callback.payload.split(':')[1];
          try {
            const claimed = await this.calendarPollStore.claimEdit(key);
            if (claimed) {
@@ -607,14 +636,6 @@ class Autopost{
          } catch {
            this.log('Training Test: immediate poll refresh failed; retry later.');
          }
-       }
-
-       try {
-         if (this.api.answer) {
-           await this.api.answer(u.callback.callback_id);
-         }
-       } catch {
-         this.log('Training Test: calendar callback answer failed.');
        }
 
        return true;
