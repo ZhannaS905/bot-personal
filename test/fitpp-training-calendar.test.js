@@ -34,20 +34,73 @@ test('missing or malformed new schedule fails closed without legacy fallback',as
   await assert.rejects(cal.day('2026-11-05'),e=>/^stage=CALENDAR_GROUP_READ reason=GROUP_/.test(format(e)));
  }
 });
-test('actual prepare and calendarPlan never read legacy main or trainer workouts even when IDs diverge',async()=>{
- const f=fixture(),chat='-80345864298680';
- f.schedule.workouts.push({...w('additional'),extra:true,time:'22:00'});
- const env={BOT_MODE:'test',CHAT_IDS:chat,TEST_BOT_TOKEN:'offline',TEST_EXPECTED_BOT_ID:'123',WEBHOOK_SECRET:'offline_secret_123',FIREBASE_PROJECT_ID:'fitpp-test',AUTO_PUBLISH:'false',TEST_ALLOW_SEND:'false',TEST_ALLOW_EDIT:'false',TEST_ALLOW_DELETE:'false',TRAINING_TEST_AUTOPOST_ENABLED:'true',TRAINING_TEST_CALENDAR_POLLS_ENABLED:'true'};
- const raw={async request(method,url){assert.equal(method,'GET');return url==='/me'?{user_id:123,is_bot:true,username:'id623401053090_1_bot'}:url.endsWith('/members/me')?{user_id:123,is_bot:true}:{chat_id:chat,title:'Тест тренировок'};}};
- const legacy={workouts:{regular:{...w(),date:'2026-11-07',time:'10:00',cancelled:true}}},before=structuredClone(legacy);
- let legacyReads=0;
- const bot=await prepare({env,raw,storeFactory:()=>({read:async()=>null}),calendarPollStoreFactory:()=>({}),calendarStore:()=>f.store,
-  calendarDb:{doc(){legacyReads++;assert.fail('calendar polls must not read states/main');}},now:()=>new Date('2026-11-05T12:00:00+03:00')});
+test('actual prepare and calendarPlan use states/main instead of conflicting group schedule',async()=>{
+ const chat='-80345864298680';
+ const regular=w();
+ const additional={...w('additional'),extra:true,time:'22:00'};
+ const main={
+  datasetId:'synthetic-v1',
+  schemaVersion:1,
+  workouts:{
+   regular,
+   additional
+  }
+ };
+ const env={
+  BOT_MODE:'test',CHAT_IDS:chat,TEST_BOT_TOKEN:'offline',
+  TEST_EXPECTED_BOT_ID:'123',WEBHOOK_SECRET:'offline_secret_123',
+  FIREBASE_PROJECT_ID:'fitpp-test',AUTO_PUBLISH:'false',
+  TEST_ALLOW_SEND:'false',TEST_ALLOW_EDIT:'false',
+  TEST_ALLOW_DELETE:'false',TRAINING_TEST_AUTOPOST_ENABLED:'true',
+  TRAINING_TEST_CALENDAR_POLLS_ENABLED:'true'
+ };
+ const raw={async request(method,url){
+  assert.equal(method,'GET');
+  return url==='/me'
+   ? {user_id:123,is_bot:true,username:'id623401053090_1_bot'}
+   : url.endsWith('/members/me')
+    ? {user_id:123,is_bot:true}
+    : {chat_id:chat,title:'Тест тренировок'};
+ }};
+ let reads=0;
+ const db={doc(path){
+  assert.match(path,/states\/main$/);
+  return {async get(){
+   reads++;
+   return {exists:true,data:()=>structuredClone(main)};
+  }};
+ }};
+ const conflictingStore=()=>{
+  throw Error('OLD_GROUP_SCHEDULE_MUST_NOT_BE_READ');
+ };
+ const bot=await prepare({
+  env,raw,
+  storeFactory:()=>({read:async()=>null}),
+  calendarPollStoreFactory:()=>({}),
+  calendarStore:conflictingStore,
+  calendarDb:db,
+  now:()=>new Date('2026-11-05T12:00:00+03:00')
+ });
  assert.equal(bot.calendarMode,true);
- assert.deepEqual((await bot.calendarPlan()).map(w=>w.id),['regular','additional']);
+ assert.deepEqual((await bot.calendarPlan()).map(x=>x.id),['regular','additional']);
  assert.equal((await bot.calendar.findById('regular')).time,'20:00');
- assert.equal(legacyReads,0);assert.deepEqual(legacy,before);
- const noLegacyDb=await prepare({env,raw,storeFactory:()=>({read:async()=>null}),calendarPollStoreFactory:()=>({}),calendarStore:()=>f.store});
- assert.equal((await noLegacyDb.calendar.findById('regular')).time,'20:00');
- await assert.rejects(prepare({env,raw,storeFactory:()=>({read:async()=>null}),calendarPollStoreFactory:()=>({}),calendarDb:{}}),e=>format(e)==='stage=CALENDAR_GROUP_READ reason=GROUP_CALENDAR_STORE_REQUIRED');
+ assert.ok(reads>=2);
+
+ main.workouts.regular.date='2026-11-06';
+ main.workouts.regular.time='18:30';
+ assert.deepEqual((await bot.calendarPlan()).map(x=>x.id),['additional']);
+ assert.equal((await bot.calendar.findById('regular')).time,'18:30');
+
+ main.workouts.regular.cancelled=true;
+ assert.equal((await bot.calendar.findById('regular')).cancelled,true);
+
+ await assert.rejects(
+  prepare({
+   env,raw,
+   storeFactory:()=>({read:async()=>null}),
+   calendarPollStoreFactory:()=>({}),
+   calendarStore:conflictingStore
+  }),
+  /CALENDAR_DB_REQUIRED/
+ );
 });
