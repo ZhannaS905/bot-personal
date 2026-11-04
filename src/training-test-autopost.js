@@ -326,8 +326,10 @@ class Autopost{
       if (await this.calendarPollStore.syncBookings(poll.key)) {
         completed++;
       }
-    } catch {
-      this.log('Training Test: deferred booking sync failed; retry later.');
+    } catch (error) {
+      const {mark, format} = require('./fitpp-direct-diagnostic');
+      this.log('Training Test: deferred booking sync failed; ' +
+        format(mark(error, 'CALENDAR_SYNC')));
     }
   }
 
