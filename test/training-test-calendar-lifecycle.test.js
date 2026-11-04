@@ -41,7 +41,9 @@ async function fixture(start = '2026-11-05T12:00:00+03:00') {
   store.listPublished = async () => {const p=await store.read(key); return p.status==='published'?[p]:[];};
   store.listPendingDeletes = async () => [];
   store.listPendingBookingSync = async () => [];
-  const calendar = {day:async()=>[], findById:async()=>({...workout})};
+  const calendar = require('../src/fitpp-training-calendar').createTrainingCalendar({
+    store:{read:async()=>({schemaVersion:1,projectId:'fitpp-test',workouts:[{...workout}]})}
+  });
   const service = new Autopost({store:{}, api, calendar, calendarPollStore:store, calendarMode:true, now:()=>new Date(now), log:()=>{}});
   return {service, store, key, id, puts, deletes, get message(){return message;},
     move:changes=>{workout={...workout,...changes};}, time:at=>{now=Date.parse(at);}, fail:value=>{fail=value;}};
@@ -103,4 +105,17 @@ test('failed MAX edit remains dirty and retries on the next five minute tick', a
   p=await f.store.read(f.key);
   assert.equal(p.revision,p.displayedRevision);
   assert.equal(f.puts.length,1);
+});
+
+test('new schedule refresh preserves votes and MID across a move without another POST', async () => {
+  const f=await fixture();
+  await f.store.vote(f.key,{id:'fixture-vote',uuid:f.id,mid:'mid.existing',uid:'1',name:'Участник',action:'yes',at:Date.parse('2026-11-05T12:00:00+03:00')},calendarPollBody);
+  await f.service.tick();
+  const before=await f.store.read(f.key);
+  f.move({date:'2026-11-06',time:'21:30'});
+  f.time('2026-11-05T12:05:00+03:00');await f.service.tick();
+  const after=await f.store.read(f.key);
+  assert.deepEqual(after.votes,before.votes);assert.deepEqual(after.order,before.order);
+  assert.equal(after.mid,before.mid);assert.equal(after.id,before.id);
+  assert.equal(f.message.body.attachments[0].payload.buttons.flat().length,2);
 });

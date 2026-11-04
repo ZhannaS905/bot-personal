@@ -693,7 +693,12 @@ async function prepare({env=process.env,storeFactory,calendarPollStoreFactory,ca
       bookingSyncEnabled:()=>env.TRAINING_TEST_BOOKING_SYNC_ENABLED==='true'
     })
   : null;
- const calendar = calendarStore && calendarDb
+ const calendarMode=env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true';
+ const calendar = calendarMode
+  ? await at('CALENDAR_GROUP_READ',()=>require('./fitpp-training-calendar').createTrainingCalendar({
+      store:typeof calendarStore==='function'?calendarStore():null
+    }))
+  : calendarStore && calendarDb
   ? require('./fitpp-combined-calendar').createCombinedCalendar({
       calendarStore,calendarDb
     })
@@ -702,7 +707,7 @@ async function prepare({env=process.env,storeFactory,calendarPollStoreFactory,ca
     : null;
  return new Autopost({
     store,api,booking,calendar,calendarPollStore,
-    calendarMode:env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true',
+    calendarMode,
     admins:c.admins,now
   });
 }
