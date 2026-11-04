@@ -17,5 +17,8 @@
   "license": "MIT",
   "dependencies": {
     "firebase": "12.19.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2"
   }
 }
