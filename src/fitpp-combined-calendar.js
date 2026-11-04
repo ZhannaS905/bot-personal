@@ -1,5 +1,6 @@
 'use strict';
 
+const {at}=require('./fitpp-direct-diagnostic');
 const {createCalendar,createGroupCalendar}=require('./fitpp-calendar-reader');
 
 function createCombinedCalendar({calendarStore,calendarDb}) {
@@ -16,8 +17,8 @@ function createCombinedCalendar({calendarStore,calendarDb}) {
   return {
     async day(date) {
       const [groupWorkouts,extraWorkouts]=await Promise.all([
-        regular.day(date),
-        additional.day(date)
+        at('CALENDAR_GROUP_READ',()=>regular.day(date)),
+        at('CALENDAR_EXTRA_READ',()=>additional.day(date))
       ]);
 
       const result=new Map();
@@ -45,8 +46,8 @@ function createCombinedCalendar({calendarStore,calendarDb}) {
     },
 
     async findById(id) {
-      const regularWorkout=await regular.findById(id);
-      const extraWorkout=await additional.findById(id);
+      const regularWorkout=await at('CALENDAR_GROUP_READ',()=>regular.findById(id));
+      const extraWorkout=await at('CALENDAR_EXTRA_READ',()=>additional.findById(id));
 
       if (regularWorkout && extraWorkout) {
         if (regularWorkout.date!==extraWorkout.date ||

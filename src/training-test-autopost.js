@@ -343,7 +343,7 @@ class Autopost{
        (+now - (this.lastCalendarPlan || 0) >= 60 * 60 * 1000));
     if (planDue) {
       this.lastCalendarPlan = +now;
-      const plan = await at('CALENDAR_LIST', () => this.calendarPlan());
+      const plan = await at('CALENDAR_PLAN', () => this.calendarPlan());
       for (const workout of plan) {
         if (workout.publishDue) {
           await at('CALENDAR_PUBLISH', () => this.publishCalendar(workout));
@@ -368,7 +368,7 @@ class Autopost{
 
     this.lastCalendarMaintenance = +now;
 
-    const publishedPolls = await at('CALENDAR_LIST', () => this.calendarPollStore.listPublished());
+    const publishedPolls = await at('CALENDAR_POLL_LIST', () => this.calendarPollStore.listPublished());
     // Resolve moves before applying the deletion deadline from the stored date.
     const refreshedPolls = await at('CALENDAR_SYNC', () => this.refreshCalendarPolls(publishedPolls));
     await at('CALENDAR_CLEANUP', () => this.cleanupCalendarPolls(refreshedPolls));
@@ -482,7 +482,7 @@ class Autopost{
   async refreshCalendarPolls(prefetchedPolls) {
     if (!this.calendarMode || !this.calendar || !this.calendarPollStore) return;
 
-    const polls = Array.isArray(prefetchedPolls) ? prefetchedPolls : await at('CALENDAR_LIST', () => this.calendarPollStore.listPublished());
+    const polls = Array.isArray(prefetchedPolls) ? prefetchedPolls : await at('CALENDAR_POLL_LIST', () => this.calendarPollStore.listPublished());
 
     for (const [index, poll] of polls.entries()) {
       const key = poll.key;
