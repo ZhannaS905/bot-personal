@@ -693,18 +693,21 @@ async function prepare({env=process.env,storeFactory,calendarPollStoreFactory,ca
       bookingSyncEnabled:()=>env.TRAINING_TEST_BOOKING_SYNC_ENABLED==='true'
     })
   : null;
- const calendarMode=env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true';
+const calendarMode=env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true';
  const calendar = calendarMode
-  ? await at('CALENDAR_GROUP_READ',()=>require('./fitpp-training-calendar').createTrainingCalendar({
-      store:typeof calendarStore==='function'?calendarStore():null
-    }))
+  ? (() => {
+      if (!calendarDb) throw Error('CALENDAR_DB_REQUIRED');
+      return require('./fitpp-calendar-reader').createCalendar({
+        db:calendarDb
+      });
+    })()
   : calendarStore && calendarDb
-  ? require('./fitpp-combined-calendar').createCombinedCalendar({
-      calendarStore,calendarDb
-    })
-  : calendarDb
-    ? require('./fitpp-calendar-reader').createCalendar({db:calendarDb})
-    : null;
+    ? require('./fitpp-combined-calendar').createCombinedCalendar({
+        calendarStore,calendarDb
+      })
+    : calendarDb
+      ? require('./fitpp-calendar-reader').createCalendar({db:calendarDb})
+      : null;
  return new Autopost({
     store,api,booking,calendar,calendarPollStore,
     calendarMode,
