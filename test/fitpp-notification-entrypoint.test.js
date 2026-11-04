@@ -60,7 +60,8 @@ test('standalone send mode with intercepted fetch: baseline silent, one personal
   assert.equal(posts.length,1);assert.deepEqual(JSON.parse(posts[0].options.body),{text:require('../src/fitpp-notification-send.cjs').formatNotification({...snapshots()[1],status:'attended',date:'2026-10-26',remaining:5}),notify:false});
   assert.equal(f.logs[0],'FITPP_NOTIFICATION_BASELINE no_history_send');
   assert.ok(f.logs.includes('FITPP_NOTIFICATION_RESULT sent'));
-  assert.equal(fs.readdirSync(path.join(f.storageRoot,'fitpp-notification-attempts-v1')).length,2);
+  assert.equal(fs.readdirSync(path.join(f.storageRoot,'fitpp-notification-attempts-v1')).filter(name=>/^[a-f0-9]{64}$/.test(name)).length,2);
+  assert.ok(fs.existsSync(path.join(f.storageRoot,'fitpp-notification-attempts-v1','attendance-baseline-v1.json')));
 });
 test('standalone verify exits without sending or creating storage',async t=>{
   const f=fixture(t);await main(env,['--verify'],f);
@@ -81,7 +82,8 @@ test('existing preview watcher delegates explicit send mode through prepared int
   assert.equal(posts.length,1);assert.equal(posts[0].url.search,'?chat_id=126619382');
   assert.ok(f.logs.includes('FITPP_NOTIFICATION_RESULT sent'));
   assert.ok(!f.logs.some(line=>line.startsWith('FITPP_PREVIEW_ONLY')));
-  assert.equal(fs.readdirSync(path.join(f.storageRoot,'fitpp-notification-attempts-v1')).length,2);
+  assert.equal(fs.readdirSync(path.join(f.storageRoot,'fitpp-notification-attempts-v1')).filter(name=>/^[a-f0-9]{64}$/.test(name)).length,2);
+  assert.ok(fs.existsSync(path.join(f.storageRoot,'fitpp-notification-attempts-v1','attendance-baseline-v1.json')));
 });
 test('existing watcher send mode refuses production, wrong recipient and ambiguous flags',async t=>{
   const f=fixture(t,{wrongUser:true});
@@ -119,7 +121,7 @@ test('verified Training Test volume accepts existing evidence, preserves journal
  const f=fixture(t),read=fs.readFileSync,stat=fs.statSync,mkdir=fs.mkdirSync;
  const claim='/app/data/fitpp-notification-attempts-v1/f50668b32b88ed07d5831a719737b31b6aff4c59b9f4b8f4aa6362a8bf7e3a3e';
  const evidence=new Map([['/app/data/fitpp-storage-check.txt','fitpp-storage-check-20261026\n'],[claim,'attempted\n']]);
- t.mock.method(fs,'readFileSync',(p,...args)=>{if(String(p).startsWith('/app/data/')){if(!evidence.has(p))throw Error('ENOENT');return evidence.get(p)}return read(p,...args)});
+ t.mock.method(fs,'readFileSync',(p,...args)=>{if(String(p)==='/app/data/fitpp-notification-attempts-v1/attendance-baseline-v1.json')return JSON.stringify({version:1,scope:'fitpp-test:synthetic-v1:training-test:attendance-v1',ids:[]});if(String(p).startsWith('/app/data/')){if(!evidence.has(p))throw Error('ENOENT');return evidence.get(p)}return read(p,...args)});
  t.mock.method(fs,'statSync',(p,...args)=>p==='/app/data'?{isDirectory:()=>true}:stat(p,...args));
  t.mock.method(fs,'mkdirSync',(p,...args)=>{if(p==='/app/data/fitpp-notification-attempts-v1')return;return mkdir(p,...args)});
  const liveEnv={...env,FITPP_NOTIFICATION_STORAGE_CONFIRMED:'fitpp-test:training-test:storage-check-20261026'};
@@ -168,4 +170,87 @@ test('empty candidate logs are hourly per process while every poll and nonzero c
     assert.equal(ms,30000);if(++polls===7)throw f.stop;
   }}),e=>e===f.stop);
   assert.equal(zeroLogs(),2);
+});
+
+for(const status of ['attended','missed'])test(`temporary MAX verification failure retains pending ${status} without resetting baseline`,async t=>{
+ const f=fixture(t);
+ for(const state of f.states.slice(1)){
+  state.visits.w['demo-client-1']=status;
+  state.visitOps.w['demo-client-1'].status=status;
+ }
+ const intercepted=global.fetch;let checks=0;
+ t.mock.method(global,'fetch',async(input,options)=>{
+  const url=new URL(input);
+  if(url.hostname==='platform-api2.max.ru'&&url.pathname==='/me'&&++checks===3)
+   return {ok:false,status:503};
+  return intercepted(input,options);
+ });
+ await assert.rejects(main(env,['--send','--watch'],f),e=>e===f.stop);
+ assert.equal(f.calls.filter(c=>c.url.pathname==='/messages').length,1);
+ assert.equal(f.logs.filter(s=>s==='FITPP_NOTIFICATION_BASELINE no_history_send').length,1);
+ assert.ok(f.logs.includes('FITPP_NOTIFICATION_RETRY reason=MAX_HTTP_503'));
+ assert.ok(f.logs.includes('FITPP_NOTIFICATION_RESULT sent'));
+});
+
+test('temporary Firestore read failure preserves baseline and later attendance transition',async t=>{
+ const f=fixture(t),intercepted=global.fetch;let reads=0;
+ t.mock.method(global,'fetch',async(input,options)=>{
+  const url=new URL(input);
+  if(url.hostname==='firestore.googleapis.com'&&url.pathname.endsWith('/states/main')&&++reads===2)
+   return {ok:false,status:503};
+  return intercepted(input,options);
+ });
+ await assert.rejects(main(env,['--send','--watch'],f),e=>e===f.stop);
+ assert.equal(f.calls.filter(c=>c.url.pathname==='/messages').length,1);
+ assert.equal(f.logs.filter(s=>s==='FITPP_NOTIFICATION_BASELINE no_history_send').length,1);
+ assert.ok(f.logs.includes('FITPP_NOTIFICATION_RETRY reason=HTTP_503'));
+});
+
+test('failure diagnostics exclude arbitrary error text; only temporary transport failures retry',()=>{
+ const {failureReason,transientFailure}=require('../fitpp-notification-test.cjs');
+ assert.equal(failureReason(Error('secret body token=value')),'UNKNOWN');
+ assert.equal(failureReason(Error('NOTIFICATION_RECIPIENT_REFUSED')),'NOTIFICATION_RECIPIENT_REFUSED');
+ assert.equal(transientFailure(Error('NOTIFICATION_RECIPIENT_REFUSED')),false);
+ assert.equal(transientFailure(Error('HTTP_403')),false);
+ assert.equal(transientFailure(Error('MAX HTTP 429')),true);
+ assert.equal(transientFailure(Object.assign(Error('private'),{cause:{code:'ECONNRESET'}})),true);
+});
+
+test('purchase remains queued after temporary pre-send verification error',async t=>{
+ const f=fixture(t),before=f.states[0],after=structuredClone(before);
+ before.mutationReceipts={};after.mutationReceipts={purchase1:{type:'subscription',event:{
+  version:1,operationId:'purchase1',cycleId:'sub',clientId:'demo-client-1',
+  subscriptionId:'sub',oldExpires:null,newExpires:'2026-12-01',sessions:8}}};
+ before.clients[0].subscriptions[0].expires='2026-12-01';
+ after.clients[0].subscriptions[0].expires='2026-12-01';
+ f.states.splice(0,f.states.length,before,after,after);
+ const intercepted=global.fetch;let checks=0;
+ t.mock.method(global,'fetch',async(input,options)=>{
+  const url=new URL(input);
+  if(url.hostname==='platform-api2.max.ru'&&url.pathname==='/me'&&++checks===3)
+   return {ok:false,status:503};
+  return intercepted(input,options);
+ });
+ await assert.rejects(main({...env,FITPP_NOTIFICATION_RECEIPTS_ENABLED:'true'},['--send','--watch'],f),e=>e===f.stop);
+ const posts=f.calls.filter(c=>c.url.pathname==='/messages');
+ assert.equal(posts.length,1);
+ assert.match(JSON.parse(posts[0].options.body).text,/Покупка/);
+ assert.ok(f.logs.includes('FITPP_RECEIPT_RESULT sent'));
+ assert.ok(f.logs.includes('FITPP_NOTIFICATION_RETRY reason=MAX_HTTP_503'));
+});
+
+test('queued attendance is discarded if cancelled before network recovers',async t=>{
+ const f=fixture(t),intercepted=global.fetch;let checks=0,waits=0;
+ t.mock.method(global,'fetch',async(input,options)=>{
+  const url=new URL(input);
+  if(url.hostname==='platform-api2.max.ru'&&url.pathname==='/me'&&++checks===3)
+   return {ok:false,status:503};
+  return intercepted(input,options);
+ });
+ const wait=async()=>{
+  if(++waits===2){f.states[1].visits={};f.states[1].visitOps={};}
+  if(waits===3)throw f.stop;
+ };
+ await assert.rejects(main(env,['--send','--watch'],{...f,wait}),e=>e===f.stop);
+ assert.equal(f.calls.filter(c=>c.url.pathname==='/messages').length,0);
 });

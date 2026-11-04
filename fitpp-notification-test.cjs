@@ -37,21 +37,29 @@ async function main(env=process.env,args=process.argv.slice(2),{
   const receipts=require('./src/fitpp-receipt-notifications.cjs');
   const receiptSession=receipts.createReceiptSession(live&&env.FITPP_NOTIFICATION_RECEIPTS_ENABLED==='true'?{directory}:{}), receiptSender=receipts.createReceiptSender({env,directory});
   let token=await signIn(env),expires=Date.now()+45*60000;
+  const unified=require('./src/fitpp-unified-attendance-notifications.cjs');
+  const unifiedSession=unified.createSession(live?{directory}:{});
+  const pendingVisits=new Map(), pendingReceipts=new Map();
   do {
+   try {
     if(Date.now()>=expires){token=await signIn(env);expires=Date.now()+45*60000}
     const {main:state,binding}=await readBoth(token);
     await sender.verify(binding);
     if(mode==='--verify'){console.log('FITPP_NOTIFICATION_VERIFIED no_send no_firestore_write');return}
-    const {baseline,candidates}=session.check(state,binding);
+    const {baseline,candidates:legacyCandidates}=session.check(state,binding);
+    const candidates=[...legacyCandidates,...unifiedSession.check(state,binding)];
+    for(const item of candidates)pendingVisits.set(item.operationId,item);
     const receiptCandidates=env.FITPP_NOTIFICATION_RECEIPTS_ENABLED==='true'?receiptSession.check(state,binding):[];
-    if(live)for(const result of await require('./src/fitpp-notification-recovery.cjs').recover({state,binding,env,directory,excludeReceiptIds:receiptCandidates.map(item=>item.requestId),readFresh:()=>readBoth(token)}))
+    for(const item of receiptCandidates)pendingReceipts.set(item.requestId,item);
+    if(live)for(const result of await require('./src/fitpp-notification-recovery.cjs').recover({state,binding,env,directory,excludeReceiptIds:[...pendingReceipts.keys()],readFresh:()=>readBoth(token)}))
       console.log('FITPP_RECOVERY_RESULT '+result);
-    for(const item of receiptCandidates){
+    for(const item of pendingReceipts.values()){
       const fresh=await readBoth(token);
       if(receipts.current(item,fresh.main,fresh.binding)){
         if(!live)console.log('FITPP_RECEIPT_PREVIEW '+JSON.stringify(receipts.format(item)));
         console.log('FITPP_RECEIPT_RESULT '+(live?await receiptSender.send(item,fresh.main,fresh.binding):'dry-run'));
       }
+      pendingReceipts.delete(item.requestId);
     }
     if(expiryEnabled)for(const item of expirySessions.flatMap(session=>session.check(state,binding,Date.now()))) {
       // Refresh immediately before attempting: extension/cancellation/balance may change.
@@ -65,9 +73,51 @@ async function main(env=process.env,args=process.argv.slice(2),{
       console.log('FITPP_NOTIFICATION_CANDIDATES 0');
       lastEmptyCandidatesLog=Date.now();
     }
-    for(const item of candidates)console.log('FITPP_NOTIFICATION_RESULT '+(live?await sender.send(item,binding):'dry-run'));
+    for(const item of pendingVisits.values()){
+      // A pre-send transport failure leaves the item queued. Recheck committed
+      // intent and remaining balance before a later attempt, never replay a
+      // corrected/cancelled visit or send stale balance to another binding.
+      const fresh=live?await readBoth(token):{main:state,binding};
+      const op=fresh.main.visitOps?.[item.workoutId]?.[item.clientId];
+      const client=fresh.main.clients?.find(c=>c.id===item.clientId&&!c.archivedAt);
+      const sub=client?.subscriptions?.find(s=>s.id===item.subscriptionId&&!s.cancelledAt);
+      const workout=fresh.main.workouts?.[item.workoutId];
+      const row=fresh.binding.bindings?.find(b=>b.clientId===item.clientId);
+      if((!item.receiptId||unified.current(item,fresh.main,fresh.binding))&&
+         op?.operationId===item.operationId&&op.status===item.status&&op.subscriptionId===item.subscriptionId&&
+         fresh.main.visits?.[item.workoutId]?.[item.clientId]===item.status&&sub?.left===item.remaining&&
+         workout?.cancelled===false&&workout.date===item.date&&workout.location===op.location&&
+         row?.notificationsEnabled===true&&row.maxChatId===item.maxChatId){
+        console.log('FITPP_NOTIFICATION_RESULT '+(live?await sender.send(item,fresh.binding):'dry-run'));
+      }
+      pendingVisits.delete(item.operationId);
+    }
+   } catch(error) {
+    if(!transientFailure(error))throw error;
+    // Keep detector baselines and unsent candidates across temporary read or
+    // verification errors. Reserved/uncertain sends are still never retried.
+    console.log('FITPP_NOTIFICATION_RETRY reason='+failureReason(error));
+   }
     await wait(30000);
   } while(true);
 }
-if(require.main===module)(async()=>{let lock;try{if(process.argv.slice(2).join(' ')==='--send --watch')lock=await require('./src/fitpp-notification-lock.cjs').acquire();await main()}finally{lock?.close()}})().catch(()=>{console.error('FITPP_NOTIFICATION_STOPPED verification_or_io_failed no_automatic_retry');process.exitCode=1});
-module.exports={main};
+if(require.main===module)(async()=>{let lock;try{if(process.argv.slice(2).join(' ')==='--send --watch')lock=await require('./src/fitpp-notification-lock.cjs').acquire();await main()}finally{lock?.close()}})().catch(error=>{console.error('FITPP_NOTIFICATION_STOPPED verification_or_io_failed no_automatic_retry reason='+failureReason(error));process.exitCode=1});
+function transientFailure(error){
+ const reason=failureReason(error);
+ return /^(?:MAX_HTTP_|HTTP_)(?:429|500|502|503|504)$/.test(reason)||
+   ['ECONNRESET','ENOTFOUND','ETIMEDOUT','TIMEOUT_OR_ABORT'].includes(reason);
+}
+function failureReason(error){
+  const message=error?.message||'';
+  if(/^(?:MAX HTTP [1-5][0-9]{2}|HTTP_[1-5][0-9]{2})$/.test(message))return message.replaceAll(' ','_');
+  if(['NOTIFICATION_SCOPE_REFUSED','NOTIFICATION_BINDING_REFUSED','NOTIFICATION_IDENTITY_REFUSED',
+      'NOTIFICATION_RECIPIENT_REFUSED','DURABLE_STORAGE_REQUIRED','RECEIPT_BASELINE_REFUSED',
+      'STATE_REFUSED','BINDING_REFUSED','UID_REFUSED','TOKEN_REFUSED','PATH_REFUSED',
+      'CONFIG_MISSING','PROJECT_REFUSED'].includes(message))return message;
+  if(['EACCES','ENOENT','ENOSPC','EROFS','ECONNRESET','ENOTFOUND','ETIMEDOUT',
+      'UNABLE_TO_VERIFY_LEAF_SIGNATURE'].includes(error?.code))return error.code;
+  if(['ECONNRESET','ENOTFOUND','ETIMEDOUT','UNABLE_TO_VERIFY_LEAF_SIGNATURE'].includes(error?.cause?.code))return error.cause.code;
+  if(error?.name==='TimeoutError'||error?.name==='AbortError')return 'TIMEOUT_OR_ABORT';
+  return 'UNKNOWN';
+}
+module.exports={main,failureReason,transientFailure};

@@ -105,3 +105,14 @@ test('recovery respects receipt/expiry switches and defers disabled kinds until 
  f.env={...env};a.deepEqual(await R.recover(f),['sent']);a.equal(f.sends.length,2);a.match(f.sends[1].body.text,/Покупка/);
  a.deepEqual(await R.recover(f),[]);
 });
+
+test('recovery compares receipt meaning across reordered Firestore map fields',async t=>{
+ const f=setup(t);f.binding.bindings[0].recoverNotifications=false;
+ const reorder=value=>Array.isArray(value)?value.map(reorder):value&&typeof value==='object'
+   ?Object.fromEntries(Object.entries(value).reverse().map(([k,v])=>[k,reorder(v)])):value;
+ const fresh=reorder(f.state);
+ f.readFresh=async()=>({main:fresh,binding:reorder(f.binding)});
+ a.deepEqual(await R.recover(f),['sent','sent']);
+ a.equal(f.sends.length,2);
+ a.deepEqual(await R.recover(f),[]);
+});

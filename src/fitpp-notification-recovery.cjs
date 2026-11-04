@@ -70,7 +70,13 @@ async function recover({state,binding,readFresh,env,directory,raw,now=Date.now,e
  const results=[];
  for(const old of pending){
   const fresh=await readFresh();
-  const item=candidates(fresh.main,fresh.binding,now()).find(item=>isDeepStrictEqual(item,old));
+  const item=candidates(fresh.main,fresh.binding,now()).find(item=>{
+   // REST map field ordering is not stable. Compare the parsed receipt, while
+   // retaining every identity, recipient and event freshness check.
+   if(item.kind!=='receipt'||old.kind!=='receipt')return isDeepStrictEqual(item,old);
+   const normalized=value=>({...value,item:{...value.item,receipt:JSON.parse(value.item.receipt)}});
+   return isDeepStrictEqual(normalized(item),normalized(old));
+  });
   if(!item){results.push('stale');continue}
   await verify(raw,fresh.binding,item.clientId);
   const text=format(item);

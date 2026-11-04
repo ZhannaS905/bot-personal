@@ -82,7 +82,7 @@ async function capability(c,{raw=new MaxApi(c.token)}={}){
   }
   await raw.request('DELETE', '/messages', {message_id:m.body.mid});
  },
- async answer(id){if(typeof id!=='string'||!id.trim()||id.length>256)throw Error('CALLBACK_ID_REQUIRED');return raw.request('POST','/answers',{callback_id:id},{})},async editCalendar(p, {beforePut=async()=>{}}={}) {
+ async answer(id){if(typeof id!=='string'||!id.trim()||id.length>256)throw Error('CALLBACK_ID_REQUIRED');return raw.request('POST','/answers',{callback_id:id},{notification:'Нажатие обработано'})},async editCalendar(p, {beforePut=async()=>{}}={}) {
   if (p?.status !== 'published' ||
       p.cancelled === true ||
       !MID.test(p.mid) ||
@@ -589,7 +589,10 @@ class Autopost{
        // Acknowledge before the slow MAX verification/edit sequence. Failure
        // must never prevent the already committed vote or booking sync.
        try {
-         if (this.api.answer) await this.api.answer(u.callback.callback_id);
+         if (this.api.answer) {
+           await this.api.answer(u.callback.callback_id);
+           this.log('Training Test: calendar callback answered.');
+         }
        } catch (error) {
          const status = /^MAX HTTP ([1-5][0-9]{2})$/.exec(error?.message || '');
          this.log('Training Test: calendar callback answer failed; reason=' +

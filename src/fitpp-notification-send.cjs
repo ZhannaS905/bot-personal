@@ -64,8 +64,14 @@ function createSender({env, directory, raw}) {
           !Number.isSafeInteger(item.remaining) || item.remaining < 0 || item.previous !== item.remaining + 1)
         throw Error('NOTIFICATION_CANDIDATE_REFUSED');
       await verify(raw,binding,item.clientId);
-      if (!reserve(directory,item.operationId)) return 'duplicate';
-      if (!reserve(directory,'visit:' + JSON.stringify([item.clientId,item.workoutId]))) return 'duplicate';
+      // Current UI receipts identify confirmed transitions; one workout can change status.
+      const unified = typeof item.receiptId === 'string' && item.receiptId.length > 0 &&
+        item.receiptId.length <= 128 && Number.isSafeInteger(item.receiptRevision) && item.receiptRevision > 0;
+      const operationKey = unified ? 'attendance-ui-v1:' + item.receiptId : item.operationId;
+      const visitKey = unified ? 'visit-ui-v1:' + JSON.stringify([item.clientId,item.workoutId,item.receiptId])
+        : 'visit:' + JSON.stringify([item.clientId,item.workoutId]);
+      if (!reserve(directory,operationKey)) return 'duplicate';
+      if (!reserve(directory,visitKey)) return 'duplicate';
       try {
         await raw.send(String(item.maxChatId),{text:formatNotification(item),notify:false});
         return 'sent';

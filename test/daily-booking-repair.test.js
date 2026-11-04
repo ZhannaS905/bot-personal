@@ -48,10 +48,10 @@ test('unbound, archived, cancelled workout retain booking guards',async()=>{
   const f=fixture();f.p.last[USER]=now;f.p.votes[USER]='synthetic';f.p.order=[USER];change(f);await a.rejects(f.booking.receive(callback(),f.p));a.equal(f.data.get('fitppTestWorkspaces/synthetic-v1/states/bookingClock').revision,0);
  }
 });
-test('MAX callback answer uses query callback_id and empty body, no message replacement; existing transport spaces API calls',async t=>{
+test('MAX callback answer uses query callback_id and notification body, no message replacement; existing transport spaces API calls',async t=>{
  const {capability}=require('../src/training-test-autopost'),{MaxApi}=require('../src/api');const requests=[];
  const raw={request:async(...args)=>{requests.push(args);return args[1]==='/me'?{user_id:123,username:'id623401053090_1_bot',is_bot:true}:args[1].endsWith('/members/me')?{user_id:123,is_bot:true}:{chat_id:CHAT,title:'Тест тренировок'}}};
- const api=await capability({expectedId:'123'},{raw});await api.answer('callback-test');a.deepEqual(requests.at(-1),['POST','/answers',{callback_id:'callback-test'},{}]);await a.rejects(api.answer('   '),/CALLBACK_ID/);
+ const api=await capability({expectedId:'123'},{raw});await api.answer('callback-test');a.deepEqual(requests.at(-1),['POST','/answers',{callback_id:'callback-test'},{notification:'Нажатие обработано'}]);await a.rejects(api.answer('   '),/CALLBACK_ID/);
  let clock=0;const times=[];t.mock.method(Date,'now',()=>clock);const transport=new MaxApi('mock',async()=>{times.push(clock);return {ok:true,json:async()=>({success:true})}},async ms=>{clock+=ms});await transport.request('POST','/answers',{callback_id:'one'},{});await transport.request('POST','/answers',{callback_id:'two'},{});a(times[1]-times[0]>=500);
 });
 test('older callback cannot project stale intent while latest booking is pending; missing durable vote refuses writes',async()=>{

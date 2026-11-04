@@ -81,13 +81,13 @@ function current(item,state,binding){
  // Other receipt kinds keep the existing expiry freshness rule.
  return item.kind==='freeze'||sub.expires>=item.newExpires;
 }
-function initialBaseline(directory,ids){
+function initialBaseline(directory,ids,name='receipt-baseline-v1.json',scope='fitpp-test:synthetic-v1:training-test:demo-client-1'){
  if(!directory)return new Set(ids);
  const fs=require('node:fs'),path=require('node:path');
- const file=path.join(directory,'receipt-baseline-v1.json');
+ const file=path.join(directory,name);
  const read=()=>{
   const data=JSON.parse(fs.readFileSync(file,'utf8'));
-  if(data.version!==1||data.scope!=='fitpp-test:synthetic-v1:training-test:demo-client-1'||
+  if(data.version!==1||data.scope!==scope||
      !Array.isArray(data.ids)||data.ids.length>500||data.ids.some(id=>typeof id!=='string'||!id)||
      new Set(data.ids).size!==data.ids.length)throw Error('RECEIPT_BASELINE_REFUSED');
   return new Set(data.ids);
@@ -99,7 +99,7 @@ function initialBaseline(directory,ids){
  let fd;
  try{
   fd=fs.openSync(temp,'wx',0o600);
-  fs.writeFileSync(fd,JSON.stringify({version:1,scope:'fitpp-test:synthetic-v1:training-test:demo-client-1',ids}));
+  fs.writeFileSync(fd,JSON.stringify({version:1,scope,ids}));
   fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;
   try{fs.linkSync(temp,file);const d=fs.openSync(directory,'r');try{fs.fsyncSync(d);}finally{fs.closeSync(d);}}
   catch(e){if(e.code!=='EEXIST')throw e;}
@@ -139,4 +139,4 @@ function format(item){
  return `📅 Абонемент продлён!\n\n➕ Продление: ${item.days} ${daysLabel(item.days)}\n📅 Новая дата окончания: ${item.newExpires.split('-').reverse().join('.')}\n\n🫶 Ждём на тренировке!`;
 }
 function createReceiptSender({env,directory,raw}){const {settings,verify}=require('./fitpp-notification-send.cjs');const token=settings(env);raw||=new (require('./api').MaxApi)(token);return {async send(item,state,binding){if(!current(item,state,binding))return 'stale';await verify(raw,binding,item.clientId);const text=format(item);if(!reserve(directory,'receipt-v1:'+item.requestId))return 'duplicate';try{await raw.send(String(binding.bindings.find(b=>b.clientId===item.clientId).maxChatId),{text,notify:false});return 'sent';}catch{return 'uncertain';}}};}
-module.exports={createReceiptSession,createReceiptSender,current,format,eventFor};
+module.exports={createReceiptSession,createReceiptSender,current,format,eventFor,attendanceBaseline:(directory,ids)=>initialBaseline(directory,ids,'attendance-baseline-v1.json','fitpp-test:synthetic-v1:training-test:attendance-v1')};
