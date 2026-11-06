@@ -25,7 +25,10 @@ if(env.FITPP_NOTIFICATION_SUPERVISED==='true')
    const state=fs.lstatSync(parent);
 if (!state.isDirectory()) throw Error('parent_not_directory');
 if (state.uid !== 0 && state.uid !== uid) throw Error('parent_wrong_owner');
-if ((state.mode & 0o022) !== 0) throw Error('parent_unsafe_permissions');  }
+if ((state.mode & 0o022) !== 0)
+  throw Error(parent === dataRoot
+    ? 'data_root_unsafe_permissions'
+    : 'nested_parent_unsafe_permissions');  }
   checkParent(dataRoot);
   let parent=dataRoot;
   for(const component of relative.split(path.sep).slice(0,-1)){
