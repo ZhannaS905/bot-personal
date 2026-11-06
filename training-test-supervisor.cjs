@@ -39,10 +39,11 @@ function personalNotificationsEnabled(env,{dataRoot='/data',log=console.error}={
   if(!state.isDirectory()||state.uid!==uid||(state.mode&0o7777)!==0o700)throw Error();
   fs.accessSync(directory,fs.constants.R_OK|fs.constants.W_OK|fs.constants.X_OK);
   return true;
- }catch{
-  log('FITPP_PERSONAL_NOTIFICATION_SUPERVISOR_REFUSED check_settings_and_data_directory');
+}catch(error){
+  const reason = error.code || error.message || 'unknown';
+  log(`FITPP_PERSONAL_NOTIFICATION_SUPERVISOR_REFUSED check_settings_and_data_directory ${reason}`);
   return false;
- }
+}
 }
 async function preparePersonalNotifications(env,{acquire=require('./src/fitpp-notification-lock.cjs').acquire,
  scan=manualWatchers,dataRoot='/data',log=console.error}={}){

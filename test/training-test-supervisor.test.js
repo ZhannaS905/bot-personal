@@ -121,7 +121,7 @@ test('Personal startup requires opt-in and valid settings, creates the private d
  assert.equal(fs.statSync(directory).mode&0o777,0o755);
  assert.equal(fs.readFileSync(cursor,'utf8'),'existing cursor');
  assert.ok(logs.length>0);
- assert.ok(logs.every(message=>message==='FITPP_PERSONAL_NOTIFICATION_SUPERVISOR_REFUSED check_settings_and_data_directory'));
+assert.ok(logs.every(message=>message.startsWith('FITPP_PERSONAL_NOTIFICATION_SUPERVISOR_REFUSED check_settings_and_data_directory')));
 });
 
 test('Personal startup rejects symlinks, files, foreign ownership, unsafe parents and failed access',t=>{
