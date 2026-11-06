@@ -2,12 +2,13 @@
 // Preparation only: no imports of Firebase, login, or network on module load.
 const personalConfig=require('./fitpp-personal/runtime-config');
 const OWNER_UID='lLlMAetSG1aEeJSeBl4F4ypydEh2';
-function settings(env) {
+function settings(env,{notificationsOnly=false}={}) {
  if(env.FITPP_DIRECT_ENABLED!=='true'||env.BOT_MODE!=='test')throw Error('DIRECT_DISABLED');
  const projectId=env.FIREBASE_PROJECT_ID;
  const personal=projectId===personalConfig.projectId;
  if(!personal&&projectId!=='fitpp-test')throw Error('TEST_PROJECT_REQUIRED');
- if(personal&&(env.TRAINING_TEST_CALENDAR_POLLS_ENABLED!=='true'||
+ if(notificationsOnly&&!personal)throw Error('PERSONAL_PROJECT_REQUIRED');
+ if(personal&&((!notificationsOnly&&env.TRAINING_TEST_CALENDAR_POLLS_ENABLED!=='true')||
     env.FITPP_NOTIFICATION_SUPERVISED==='true'))throw Error('PERSONAL_CALENDAR_MODE_REQUIRED');
  if(env.OWNER_DIALOG_ENABLED!==undefined&&env.OWNER_DIALOG_ENABLED!=='false')throw Error('OWNER_DIALOG_MUST_STAY_DISABLED');
  for(const k of ['AUTO_PUBLISH','TEST_ALLOW_SEND','TEST_ALLOW_EDIT','TEST_ALLOW_DELETE'])if(env[k]!=='false')throw Error('POLL_WRITES_MUST_BE_DISABLED');
@@ -19,11 +20,11 @@ function settings(env) {
  }else if(env.FIREBASE_BOT_UID!==OWNER_UID)throw Error('EXPECTED_TEST_UID_REQUIRED');
  return {apiKey:env.FIREBASE_API_KEY,projectId,authDomain:projectId+'.firebaseapp.com',uid:env.FIREBASE_BOT_UID,email:env.FIREBASE_BOT_EMAIL,password:env.FIREBASE_BOT_PASSWORD};
 }
-async function connect({env,sdk}) {
- const c=settings(env);
+async function connect({env,sdk,notificationsOnly=false}) {
+ const c=settings(env,{notificationsOnly});
  const personal=c.projectId===personalConfig.projectId;
  let app;
- try {app=sdk.initializeApp({apiKey:c.apiKey,projectId:c.projectId,authDomain:c.authDomain},'training-test-direct')}catch{throw Error('DIRECT_AUTH_CONNECTION_REJECTED')}
+ try {app=sdk.initializeApp({apiKey:c.apiKey,projectId:c.projectId,authDomain:c.authDomain},notificationsOnly?'fitpp-personal-notifications':'training-test-direct')}catch{throw Error('DIRECT_AUTH_CONNECTION_REJECTED')}
  let auth,raw;
  let closed=false;
  const close=async()=>{if(closed)return;closed=true;for(const action of [()=>auth&&sdk.signOut(auth),()=>raw&&sdk.terminate(raw),()=>sdk.deleteApp(app)]){try{await action()}catch{ /* Never expose SDK errors or credentials. */ }}};
@@ -41,6 +42,10 @@ async function connect({env,sdk}) {
   }
   await validateAuth();
   raw=sdk.getFirestore(app);
+  if(notificationsOnly){
+   const {createSource}=require('./fitpp-personal/notifications');
+   return {source:createSource({sdk,raw,validateAuth}),close};
+  }
   const {createDirectDb}=require('./fitpp-direct-db');
   const db=personal?null:createDirectDb({sdk,raw,projectId:c.projectId,botUid:c.uid,validateAuth,getUid:()=>auth.currentUser?.uid,writeEnabled:()=>env.FITPP_DIRECT_WRITES_ENABLED==='true',dailyBotId:env.TRAINING_TEST_AUTOPOST_ENABLED==='true'?env.TEST_EXPECTED_BOT_ID:undefined});
   // Firebase client SDK owns refresh lifecycle. Never persist or log tokens.
