@@ -3,6 +3,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {spawn}=require('node:child_process');
 const personalWorker='src/fitpp-personal/notification-worker.js';
+const personalDirectoryName='fitpp-personal-notifications';
 // Linux /proc is mandatory: refuse startup if the old terminal watcher is alive.
 function manualWatchers(root='/proc') {
  return fs.readdirSync(root).filter(p=>/^\d+$/.test(p)).filter(p=>{
@@ -16,17 +17,46 @@ function personalNotificationsEnabled(env,{dataRoot='/data',log=console.error}={
  try {
   if(env.FITPP_NOTIFICATION_SUPERVISED==='true')throw Error();
   const {directory}=require('./'+personalWorker).settings(env);
-  if(!path.isAbsolute(directory)||!path.resolve(directory).startsWith(dataRoot+path.sep))throw Error();
-  const resolved=fs.realpathSync(directory);
-  if(!resolved.startsWith(fs.realpathSync(dataRoot)+path.sep))throw Error();
-  const state=fs.statSync(resolved);
-  if(!state.isDirectory()||(state.mode&0o777)!==0o700)throw Error();
-  fs.accessSync(resolved,fs.constants.R_OK|fs.constants.W_OK|fs.constants.X_OK);
+  const relative=path.relative(dataRoot,directory);
+  if(!path.isAbsolute(directory)||!relative||directory!==path.join(dataRoot,relative)||
+     relative==='..'||relative.startsWith('..'+path.sep))throw Error();
+  const uid=process.geteuid();
+  function checkParent(parent){
+   const state=fs.lstatSync(parent);
+   if(!state.isDirectory()||(state.uid!==0&&state.uid!==uid)||(state.mode&0o022)!==0)throw Error();
+  }
+  checkParent(dataRoot);
+  let parent=dataRoot;
+  for(const component of relative.split(path.sep).slice(0,-1)){
+   parent=path.join(parent,component);
+   checkParent(parent);
+  }
+  if(relative===personalDirectoryName){
+   try{fs.mkdirSync(directory,{mode:0o700})}
+   catch(error){if(error.code!=='EEXIST')throw error}
+  }
+  const state=fs.lstatSync(directory);
+  if(!state.isDirectory()||state.uid!==uid||(state.mode&0o7777)!==0o700)throw Error();
+  fs.accessSync(directory,fs.constants.R_OK|fs.constants.W_OK|fs.constants.X_OK);
   return true;
  }catch{
   log('FITPP_PERSONAL_NOTIFICATION_SUPERVISOR_REFUSED check_settings_and_data_directory');
   return false;
  }
+}
+async function preparePersonalNotifications(env,{acquire=require('./src/fitpp-notification-lock.cjs').acquire,
+ scan=manualWatchers,dataRoot='/data',log=console.error}={}){
+ if(env.FITPP_PERSONAL_NOTIFICATIONS_ENABLED===undefined||
+    env.FITPP_PERSONAL_NOTIFICATIONS_ENABLED==='false'||env.FITPP_NOTIFICATION_SUPERVISED==='true')return;
+ let lock;
+ try{
+  lock=await acquire();
+  if(scan().length)throw Error();
+  if(personalNotificationsEnabled(env,{dataRoot,log}))return lock;
+ }catch{
+  log('FITPP_PERSONAL_NOTIFICATION_SUPERVISOR_REFUSED check_existing_watchers');
+ }
+ lock?.close();
 }
 function supervise({enabled=false,personalEnabled=false,launch=(file,args)=>spawn(process.execPath,[path.join(__dirname,file),...args],{stdio:'inherit'}),schedule=setTimeout,cancel=clearTimeout,log=console.log,finish=code=>process.exit(code)}={}) {
  let stopping=false,timer,killTimer,failures=0;
@@ -66,13 +96,14 @@ function supervise({enabled=false,personalEnabled=false,launch=(file,args)=>spaw
  return {stop};
 }
 if(require.main===module)(async()=>{
- let lock;try{
+ let lock,personalLock;try{
   const flag=process.env.FITPP_NOTIFICATION_SUPERVISED;
   if(flag!==undefined&&!['true','false'].includes(flag))throw Error('FLAG_REFUSED');
   if(flag==='true')lock=await require('./src/fitpp-notification-lock.cjs').acquire('supervisor');
   if(flag==='true'&&manualWatchers().length)throw Error('EXISTING_WATCHER');
-  const runtime=supervise({enabled:flag==='true',personalEnabled:personalNotificationsEnabled(process.env)});
+  personalLock=await preparePersonalNotifications(process.env);
+  const runtime=supervise({enabled:flag==='true',personalEnabled:Boolean(personalLock)});
   process.once('SIGTERM',()=>runtime.stop());process.once('SIGINT',()=>runtime.stop());
- }catch{lock?.close();console.error('FITPP_SUPERVISOR_START_REFUSED check_flag_and_existing_watchers');process.exitCode=1}
+ }catch{personalLock?.close();lock?.close();console.error('FITPP_SUPERVISOR_START_REFUSED check_flag_and_existing_watchers');process.exitCode=1}
 })();
-module.exports={supervise,manualWatchers,personalNotificationsEnabled};
+module.exports={supervise,manualWatchers,personalNotificationsEnabled,preparePersonalNotifications};
