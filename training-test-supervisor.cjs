@@ -15,16 +15,17 @@ function personalNotificationsEnabled(env,{dataRoot='/data',log=console.error}={
  const flag=env.FITPP_PERSONAL_NOTIFICATIONS_ENABLED;
  if(flag===undefined||flag==='false')return false;
  try {
-  if(env.FITPP_NOTIFICATION_SUPERVISED==='true')throw Error();
-  const {directory}=require('./'+personalWorker).settings(env);
+if(env.FITPP_NOTIFICATION_SUPERVISED==='true')
+  throw Error('legacy_supervisor_enabled');  const {directory}=require('./'+personalWorker).settings(env);
   const relative=path.relative(dataRoot,directory);
   if(!path.isAbsolute(directory)||!relative||directory!==path.join(dataRoot,relative)||
-     relative==='..'||relative.startsWith('..'+path.sep))throw Error();
+     relative==='..'||relative.startsWith('..'+path.sep))throw Error('invalid_directory_path');
   const uid=process.geteuid();
   function checkParent(parent){
    const state=fs.lstatSync(parent);
-   if(!state.isDirectory()||(state.uid!==0&&state.uid!==uid)||(state.mode&0o022)!==0)throw Error();
-  }
+if (!state.isDirectory()) throw Error('parent_not_directory');
+if (state.uid !== 0 && state.uid !== uid) throw Error('parent_wrong_owner');
+if ((state.mode & 0o022) !== 0) throw Error('parent_unsafe_permissions');  }
   checkParent(dataRoot);
   let parent=dataRoot;
   for(const component of relative.split(path.sep).slice(0,-1)){
@@ -36,8 +37,9 @@ function personalNotificationsEnabled(env,{dataRoot='/data',log=console.error}={
    catch(error){if(error.code!=='EEXIST')throw error}
   }
   const state=fs.lstatSync(directory);
-  if(!state.isDirectory()||state.uid!==uid||(state.mode&0o7777)!==0o700)throw Error();
-  fs.accessSync(directory,fs.constants.R_OK|fs.constants.W_OK|fs.constants.X_OK);
+if (!state.isDirectory()) throw Error('directory_not_directory');
+if (state.uid !== uid) throw Error('directory_wrong_owner');
+if ((state.mode & 0o7777) !== 0o700) throw Error('directory_wrong_permissions');  fs.accessSync(directory,fs.constants.R_OK|fs.constants.W_OK|fs.constants.X_OK);
   return true;
 }catch(error){
   const reason = error.code || error.message || 'unknown';
