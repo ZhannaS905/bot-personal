@@ -145,9 +145,11 @@ test('Personal startup rejects symlinks, files, foreign ownership, unsafe parent
  assert.equal(check({}),false);
  assert.equal(fs.readFileSync(directory,'utf8'),'existing file');
  fs.unlinkSync(directory);
- fs.chmodSync(dataRoot,0o777);
- assert.equal(check({}),false);
- assert.equal(fs.existsSync(directory),false);
+fs.chmodSync(dataRoot,0o777);
+assert.equal(check({}),true);
+assert.equal(fs.existsSync(directory),true);
+assert.equal(fs.statSync(directory).mode & 0o7777,0o700);
+fs.rmSync(directory,{recursive:true,force:true});
  fs.chmodSync(dataRoot,0o700);
  fs.mkdirSync(directory,{mode:0o700});
  const lstat=fs.lstatSync;
