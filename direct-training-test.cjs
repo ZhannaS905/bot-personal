@@ -44,7 +44,7 @@ async function main({env=process.env}={}) {
     }
   }
   prepared=await at('RUNTIME_PREPARE',()=>require('./src/fitpp-direct-runtime').prepare({env,sdk:tracedSdk}));
-  autopost=await at('AUTOPOST_PREPARE',()=>autopostModule.prepare({env,storeFactory:prepared.autopostStore,booking:prepared.dailyBooking,calendarPollStoreFactory:prepared.calendarPollStore,calendarStore:prepared.calendarStore,calendarDb:prepared.calendarDb}));
+  autopost=await at('AUTOPOST_PREPARE',()=>autopostModule.prepare({env,storeFactory:prepared.autopostStore,booking:prepared.dailyBooking,calendarPollStoreFactory:prepared.calendarPollStore,calendarStore:prepared.calendarStore,calendarDb:prepared.calendarDb,personalCalendar:prepared.personalCalendar}));
   const server=await at('CALENDAR_SERVER_START',()=>require('./src/training-test-http-server').start({
     autopost,
     contact:prepared.contact,

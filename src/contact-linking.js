@@ -1,5 +1,6 @@
 'use strict';
 const {createHmac, timingSafeEqual} = require('node:crypto');
+const personalConfig=require('./fitpp-personal/runtime-config');
 const MAIN='fitppTestWorkspaces/synthetic-v1/states/main';
 const LINKS='fitppTestWorkspaces/synthetic-v1/notificationBindings/training-test';
 const positive=n=>Number.isSafeInteger(n)&&n>0;
@@ -26,19 +27,19 @@ function ownPhone(payload,sender,token){
  if(tels.length!==1||lines.some(x=>/^[ \t]/.test(x)))return null;
  return phone(tels[0].slice(tels[0].indexOf(':')+1));
 }
-function matching(state,number){
- if(!Array.isArray(state?.clients)||state.clients.some(c=>typeof c?.id!=='string'||!c.id)||
-    new Set(state.clients.map(c=>c.id)).size!==state.clients.length)throw Error('SYNTHETIC_CLIENTS_REQUIRED');
+function matching(state,number,validClientId,personal){
+ if(!Array.isArray(state?.clients)||state.clients.some(c=>(personal?!validClientId(String(c?.id??'')):typeof c?.id!=='string'||!c.id))||
+    new Set(state.clients.map(c=>String(c.id))).size!==state.clients.length)throw Error('SYNTHETIC_CLIENTS_REQUIRED');
  if(number===null)return null; // Startup checks structure without inspecting phones.
  const matches=state.clients.filter(c=>phone(c.phone)===number);
- return matches.length===1&&client(matches[0].id)&&!matches[0].archivedAt?matches[0].id:null;
+ return matches.length===1&&validClientId(String(matches[0].id))&&!matches[0].archivedAt?String(matches[0].id):null;
 }
-function validateRegistry(value,botId){
+function validateRegistry(value,botId,validClientId=client){
  if(value===undefined)return {version:1,botId,bindings:[]};
  if(value?.version!==1||value.botId!==botId||!Array.isArray(value.bindings))throw Error('BINDING_STATE_REFUSED');
  const users=new Set(),clients=new Set(),chats=new Set();
  for(const b of value.bindings){
-  if(!client(b.clientId)||!positive(b.maxUserId)||!chat(b.maxChatId)||typeof b.notificationsEnabled!=='boolean'||
+  if(!validClientId(b.clientId)||!positive(b.maxUserId)||!chat(b.maxChatId)||typeof b.notificationsEnabled!=='boolean'||
      users.has(b.maxUserId)||clients.has(b.clientId)||chats.has(b.maxChatId))throw Error('BINDING_STATE_REFUSED');
   users.add(b.maxUserId);clients.add(b.clientId);chats.add(b.maxChatId);
  }
@@ -47,13 +48,19 @@ function validateRegistry(value,botId){
 // No SDK initialization, credentials lookup or network on import. Transactions
 // use the two fixed test paths only. The caller supplies an authenticated SDK.
 function firebaseStore({sdk,db,botId}){
- if(db?.app?.options?.projectId!=='fitpp-test'||!positive(botId))throw Error('TEST_SCOPE_REQUIRED');
- const main=sdk.doc(db,MAIN),links=sdk.doc(db,LINKS);
+ const project=db?.app?.options?.projectId;
+ const personal=project===personalConfig.projectId;
+ if((!personal&&project!=='fitpp-test')||!positive(botId))throw Error('TEST_SCOPE_REQUIRED');
+ const validClientId=personal?personalConfig.validClientId:client;
+ const main=sdk.doc(db,personal?personalConfig.main:MAIN);
+ const links=sdk.doc(db,personal?personalConfig.bindings:LINKS);
  async function operate(number,binding){
   try{return await sdk.runTransaction(db,async tx=>{
    const state=await tx.get(main),stored=await tx.get(links);
    if(!state.exists())throw Error('TEST_STATE_MISSING');
-   const clientId=matching(state.data(),number),registry=validateRegistry(stored.exists()?stored.data():undefined,botId);
+   if(personal)require('./fitpp-personal/calendar').assertWorkspace(state.data());
+   const clientId=matching(state.data(),number,validClientId,personal);
+   const registry=validateRegistry(stored.exists()?stored.data():undefined,botId,validClientId);
    if(!binding)return clientId;
    if(clientId!==binding.clientId)return {status:'refused'};
    const existing=registry.bindings.filter(b=>b.clientId===clientId||b.maxUserId===binding.maxUserId||b.maxChatId===binding.maxChatId);
@@ -61,12 +68,12 @@ function firebaseStore({sdk,db,botId}){
     const b=existing[0];
     if(existing.length!==1||b.clientId!==clientId||b.maxUserId!==binding.maxUserId||b.maxChatId!==binding.maxChatId)return {status:'conflict'};
     if(b.notificationsEnabled!==true||b.recoverNotifications!==true){
-     const next=validateRegistry({...registry,bindings:registry.bindings.map(row=>row===b?{...row,notificationsEnabled:true,recoverNotifications:true}:row)},botId);
+     const next=validateRegistry({...registry,bindings:registry.bindings.map(row=>row===b?{...row,notificationsEnabled:true,recoverNotifications:true}:row)},botId,validClientId);
      tx.set(links,next);
     }
     return {status:'already_linked'};
    }
-   const next=validateRegistry({...registry,bindings:[...registry.bindings,{...binding,notificationsEnabled:true,recoverNotifications:true}]},botId);
+   const next=validateRegistry({...registry,bindings:[...registry.bindings,{...binding,notificationsEnabled:true,recoverNotifications:true}]},botId,validClientId);
    tx.set(links,next);
    return {status:'linked'};
   });}catch(error){
@@ -76,7 +83,7 @@ function firebaseStore({sdk,db,botId}){
  }
  return {inspect:async()=>{await operate(null);},find:number=>operate(number),bind:(number,binding)=>operate(number,binding)};
 }
-function contactLinking({botId,token,allowedUserIds=[],store,now=Date.now}){
+function contactLinking({botId,token,allowedUserIds=[],store,now=Date.now,personal=false}){
  if(!positive(botId)||typeof token!=='string'||!token||!Array.isArray(allowedUserIds)||
     !allowedUserIds.every(positive)||!store)throw Error('TEST_LINK_CONFIG_REFUSED');
  const allowed=new Set(allowedUserIds),sessions=new Map();
@@ -99,7 +106,7 @@ function contactLinking({botId,token,allowedUserIds=[],store,now=Date.now}){
   if(u.update_type==='bot_started'||m.body?.text==='/start'){
    const old=sessions.get(uid);if(old&&u.timestamp<old.at)return;
    sessions.set(uid,{chatId,at:u.timestamp,expires:now()+300000});
-   return draft(uid,chatId,'Здравствуйте! Это Training Test. Поделитесь своим номером для поиска тестового клиента FitPP. После подтверждения будут включены уведомления об абонементе и посещениях, включая пропущенные.',
+   return draft(uid,chatId,personal?'Здравствуйте! Поделитесь своим номером, чтобы связать MAX с вашим клиентским профилем в FitPP Personal.':'Здравствуйте! Это Training Test. Поделитесь своим номером для поиска тестового клиента FitPP. После подтверждения будут включены уведомления об абонементе и посещениях, включая пропущенные.',
     [[{type:'request_contact',text:'📱 Поделиться номером телефона'}]]);
   }
   const s=sessions.get(uid);
@@ -111,11 +118,11 @@ function contactLinking({botId,token,allowedUserIds=[],store,now=Date.now}){
    ?ownPhone(attachments[0].payload,uid,token):null;
   if(!number)return draft(uid,chatId,'Не удалось подтвердить ваш контакт. Используйте кнопку «📱 Поделиться номером телефона».');
   const clientId=await store.find(number);
-  if(!clientId)return draft(uid,chatId,'Не удалось однозначно найти тестового клиента. Обратитесь к администратору теста.');
+  if(!clientId)return draft(uid,chatId,personal?'Не удалось однозначно найти клиента FitPP Personal. Обратитесь к администратору.':'Не удалось однозначно найти тестового клиента. Обратитесь к администратору теста.');
   const result=await store.bind(number,{clientId,maxUserId:uid,maxChatId:chatId});
   sessions.delete(uid);
   return draft(uid,chatId,['linked','already_linked'].includes(result.status)?
-   'Привязка сохранена. Уведомления об абонементе и посещениях включены; пропущенные будут проверены и отправлены.':
+   (personal?'Привязка сохранена. Ответы в опросах тренировок будут обновлять запись в FitPP Personal.':'Привязка сохранена. Уведомления об абонементе и посещениях включены; пропущенные будут проверены и отправлены.'):
    'Привязка не выполнена. Обратитесь к администратору теста.');
  }
  return {receive(u){const next=tail.then(()=>receive(u));tail=next.catch(()=>{});return next;}};

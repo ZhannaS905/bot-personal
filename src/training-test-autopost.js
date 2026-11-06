@@ -7,12 +7,13 @@ const {CHAT,config,body}=require('./memory-training-test');
 const {checkTestBotIdentity,identityAccepted}=require('./test-bot-identity');
 const {moscow,times}=require('./schedule');
 const {POLL}=require('../direct-core/src/pilot-policy.cjs');
+const {projectId: personalProjectId}=require('./fitpp-personal/runtime-config');
 const MID=/^mid\.[a-zA-Z0-9]+$/,UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 function settings(env){
  if(env.TRAINING_TEST_AUTOPOST_ENABLED===undefined||env.TRAINING_TEST_AUTOPOST_ENABLED==='false')return null;
  if(env.TRAINING_TEST_AUTOPOST_ENABLED!=='true')throw Error('AUTOPOST_FLAG_REFUSED');
  const c=config(env);
- if(env.FIREBASE_PROJECT_ID!=='fitpp-test')throw Error('AUTOPOST_TEST_PROJECT_REQUIRED');
+ if(env.FIREBASE_PROJECT_ID!=='fitpp-test'&&env.FIREBASE_PROJECT_ID!==personalProjectId)throw Error('AUTOPOST_TEST_PROJECT_REQUIRED');
  if(env.TRAINING_TEST_AUTOPOST_STORAGE&&env.TRAINING_TEST_AUTOPOST_STORAGE!=='firestore')throw Error('AUTOPOST_STORAGE_REFUSED');
  if(['AUTO_PUBLISH','TEST_ALLOW_SEND','TEST_ALLOW_EDIT','TEST_ALLOW_DELETE'].some(k=>env[k]!=='false'))throw Error('AUTOPOST_GENERAL_WRITES_REFUSED');
  return c;
@@ -235,8 +236,8 @@ async sendCalendar(p, message){
 }
 function pollBody(p){return body({...p,votes:new Map(p.order.map(uid=>[uid,p.votes[uid]]))})}
 class Autopost{
- constructor({store,api,booking,calendar,calendarPollStore,calendarMode=false,admins=[],now=()=>new Date(),log=console.error}){
-  Object.assign(this,{store,api,booking,calendar,calendarPollStore,calendarMode,admins,now,log});this.calendarCallbacks = calendar && calendarPollStore
+ constructor({store,api,booking,calendar,calendarPollStore,calendarMode=false,personalMode=false,admins=[],now=()=>new Date(),log=console.error}){
+  Object.assign(this,{store,api,booking,calendar,calendarPollStore,calendarMode,personalMode,admins,now,log});this.calendarCallbacks = calendar && calendarPollStore
       ? require('./training-test-calendar-callbacks').createCalendarCallbacks({
           store: calendarPollStore,
           calendar,
@@ -676,6 +677,7 @@ class Autopost{
  } // CALENDAR_ADMIN_COMMAND
 
 
+  if(this.personalMode)return Promise.resolve(false);
   const m=u?.message,cb=u?.callback;
   if(String(m?.recipient?.chat_id)!==CHAT||m.recipient.chat_type!=='chat'){if(u?.update_type==='message_callback')this.log(JSON.stringify({event:'training_test_callback',stage:'filter',reason:'chat_mismatch'}));return Promise.resolve(false);}
   const match=/^poll:([a-f0-9-]{36}):(yes|cancel)$/.exec(cb?.payload||'');
@@ -703,16 +705,19 @@ class Autopost{
  }
  close(){if(!this.closeFlight)this.closeFlight=(async()=>{await this.tail;this.stopped=true;await this.store.close()})();return this.closeFlight}
 }
-async function prepare({env=process.env,storeFactory,calendarPollStoreFactory,calendarStore,calendarDb,now,raw,booking}={}){
+async function prepare({env=process.env,storeFactory,calendarPollStoreFactory,calendarStore,calendarDb,personalCalendar,now,raw,booking}={}){
  const c=await at('AUTOPOST_SETTINGS',()=>settings(env));if(!c)return null;
- await at('AUTOPOST_STORE_FACTORY',()=>{if(typeof storeFactory!=='function')throw Error('AUTOPOST_FIRESTORE_REQUIRED')});
+ const personalMode=env.FIREBASE_PROJECT_ID===personalProjectId;
+ if(personalMode&&(!personalCalendar||typeof calendarPollStoreFactory!=='function'||
+    env.TRAINING_TEST_CALENDAR_POLLS_ENABLED!=='true'))throw Error('PERSONAL_CALENDAR_MODE_REQUIRED');
+ await at('AUTOPOST_STORE_FACTORY',()=>{if(!personalMode&&typeof storeFactory!=='function')throw Error('AUTOPOST_FIRESTORE_REQUIRED')});
  const api=await at('AUTOPOST_MAX_IDENTITY',()=>capability(c,{raw}));
- const store=await at('AUTOPOST_STORE_FACTORY',()=>{
+ const store=personalMode?{close(){}}:await at('AUTOPOST_STORE_FACTORY',()=>{
   if(typeof storeFactory!=='function')throw Error('AUTOPOST_FIRESTORE_REQUIRED');
   return storeFactory(c.expectedId,{writeEnabled:()=>env.TRAINING_TEST_AUTOPOST_ENABLED==='true'});
  });
  // Server-only read, no local cache fallback and no startup writes.
- await at('AUTOPOST_FIRST_READ',()=>store.read(moscow(now?now():new Date()).date));
+ if(!personalMode)await at('AUTOPOST_FIRST_READ',()=>store.read(moscow(now?now():new Date()).date));
  const calendarPollStore = calendarPollStoreFactory
   ? calendarPollStoreFactory(c.expectedId,{
       writeEnabled:()=>env.TRAINING_TEST_AUTOPOST_ENABLED==='true',
@@ -720,7 +725,7 @@ async function prepare({env=process.env,storeFactory,calendarPollStoreFactory,ca
     })
   : null;
 const calendarMode=env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true';
- const calendar = calendarMode
+ const calendar = personalMode ? personalCalendar : calendarMode
   ? (() => {
       if (!calendarDb) throw Error('CALENDAR_DB_REQUIRED');
       return require('./fitpp-calendar-reader').createCalendar({
@@ -736,7 +741,7 @@ const calendarMode=env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true';
       : null;
  return new Autopost({
     store,api,booking,calendar,calendarPollStore,
-    calendarMode,
+    calendarMode,personalMode,
     admins:c.admins,now
   });
 }

@@ -19,7 +19,7 @@ async function prepare({env = process.env, sdk, now = Date.now}) {
           }))
       : null;
 
-    const dailyBooking = autopostEnabled
+    const dailyBooking = autopostEnabled && !session.personalCalendar
       ? require('./fitpp-daily-booking').createDailyBooking({
           db: session.db,
           botId: env.TEST_EXPECTED_BOT_ID,
@@ -34,6 +34,7 @@ async function prepare({env = process.env, sdk, now = Date.now}) {
       calendarPollStore: session.calendarPollStore,
       calendarStore: session.calendarStore,
       calendarDb: session.db,
+      personalCalendar: session.personalCalendar,
       close: session.close
     };
   } catch (error) {

@@ -25,9 +25,12 @@ function validate(p,botId,key){
  return p;
 }
 function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>false,bookingSyncEnabled=()=>false,now=Date.now}){
- if(raw?.app?.options?.projectId!=='fitpp-test'||typeof botId!=='string'||!/^[1-9]\d*$/.test(botId)||typeof validateAuth!=='function')throw Error('CALENDAR_POLL_SCOPE_REFUSED');
+ const personalConfig = require('./fitpp-personal/runtime-config');
+ const project = raw?.app?.options?.projectId;
+ const personal = project === personalConfig.projectId;
+ if((!personal && project !== 'fitpp-test')||typeof botId!=='string'||!/^[1-9]\d*$/.test(botId)||typeof validateAuth!=='function')throw Error('CALENDAR_POLL_SCOPE_REFUSED');
  const prefix=ROOT+'/'+botId+'/polls/';
- const bindingsPath='fitppTestWorkspaces/synthetic-v1/notificationBindings/training-test';
+ const bindingsPath=personal ? personalConfig.bindings : 'fitppTestWorkspaces/synthetic-v1/notificationBindings/training-test';
  const bookingPrefix='fitppTestWorkspaces/synthetic-v1/calendarBookings/';
  const ref=key=>{if(!KEY.test(key))throw Error('CALENDAR_POLL_KEY_REFUSED');return sdk.doc(raw,prefix+key)};
  async function tx(key,fn){
@@ -133,6 +136,46 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
    });
   },
   async syncBookings(key) {
+    if (personal) {
+      if (!bookingSyncEnabled()) return false;
+      const {applyBooking} = require('./fitpp-personal/booking');
+      let changed = false;
+      // Each Personal operation has its own revision and receipt. Resume from
+      // the per-voter checkpoint on the next callback or scheduled drain.
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const result = await tx(key, async ({transaction, p, set}) => {
+          if (!p?.bookingSyncPending || !['published', 'deletePending', 'deleted'].includes(p.status)) return null;
+          const snap = await transaction.get(sdk.doc(raw, bindingsPath));
+          const registry = snap.exists() ? snap.data() : {version: 1, botId: Number(botId), bindings: []};
+          const handled = p.bookingHandledEvents ?? {};
+          const pending = Object.keys(p.last).filter(uid => handled[uid]?.at !== p.last[uid]);
+          for (const uid of pending) {
+            const desired = Object.hasOwn(p.votes, uid);
+            const previous = handled[uid] ?? p.bookingSyncedClients?.[uid];
+            const linked = resolveClient(registry, uid, botId, personalConfig.validClientId);
+            // Cancel the existing booking even if the contact is now linked elsewhere.
+            const clientId = desired ? linked : (previous?.clientId ?? previous ?? linked);
+            if (!clientId) continue;
+            if (!writeEnabled() || !bookingSyncEnabled()) throw Error('CALENDAR_POLL_WRITES_DISABLED');
+            const {more} = await applyBooking({sdk, raw, transaction, workout: p.workout, clientId, desired, now});
+            if (more) return 'continue';
+            const finished = pending.length === 1;
+            set({...p, bookingHandledEvents: {...handled, [uid]: {at: p.last[uid], clientId}},
+              bookingSyncedRevision: finished ? p.revision : p.bookingSyncedRevision ?? 0,
+              bookingSyncPending: !finished});
+            return finished ? 'done' : 'continue';
+          }
+          if (pending.length) return null;
+          set({...p, bookingSyncedRevision: p.revision, bookingSyncPending: false});
+          return 'done';
+        });
+        if (!result) break;
+        changed = true;
+        if (result === 'done') break;
+      }
+      return changed;
+    }
+
     if (!bookingSyncEnabled()) return false;
 
     return tx(key, async ({transaction, p, set}) => {

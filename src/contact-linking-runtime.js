@@ -26,7 +26,7 @@ async function prepare({env=process.env,sdk,fetchImpl=fetch,now=Date.now,session
  try{
   const store=session.contactStore(identity.user_id,{writeEnabled:()=>env.CONTACT_LINK_WRITES_ENABLED==='true'});
   await at('CONTACT_STORE',()=>store.inspect()); // Read-only transaction: main + registry, no phone output.
-  const handler=contactLinking({botId:identity.user_id,token:c.token,store,now});
+  const handler=contactLinking({botId:identity.user_id,token:c.token,store,now,personal:env.FIREBASE_PROJECT_ID===require('./fitpp-personal/runtime-config').projectId});
   const seen=new Set();let tail=Promise.resolve();
   async function receive(u){
    const user=u?.update_type==='bot_started'?u.user:u?.update_type==='message_callback'?u.callback?.user:u?.message?.sender;
