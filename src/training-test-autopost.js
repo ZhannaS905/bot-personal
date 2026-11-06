@@ -603,24 +603,8 @@ class Autopost{
        }
 
        const key = u.callback.payload.split(':')[1];
-       // Also drain on redelivery: the receipt may exist after an earlier sync
-       // failure. syncBookings reads the latest revision in one idempotent tx.
-       if (typeof this.calendarPollStore.syncBookings === 'function') {
-         for (let attempt = 0; attempt < 3; attempt++) {
-           try {
-             await this.calendarPollStore.syncBookings(key);
-             break;
-           } catch (error) {
-             this.log('Training Test: immediate booking sync failed; ' +
-               format(mark(error, 'CALENDAR_SYNC')));
-             const code = (error?.code || '').replace(/^firestore\//, '');
-             if (attempt === 2 || !['unavailable', 'deadline-exceeded', 'aborted',
-                 'auth/network-request-failed'].includes(code)) break;
-             await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
-           }
-         }
-       }
-       if (result.applied === true) {
+       const refreshPoll = async () => {
+         if (result.applied !== true) return;
          try {
            const claimed = await this.calendarPollStore.claimEdit(key);
            if (claimed) {
@@ -640,7 +624,42 @@ class Autopost{
          } catch {
            this.log('Training Test: immediate poll refresh failed; retry later.');
          }
+       };
+
+       let refresh;
+       if (this.personalMode && result.applied === true && result.action === 'yes') {
+         refresh = refreshPoll();
+         // The durable vote already marked both projections pending. Give MAX
+         // a head start, then sync the booking even if the edit is still in flight.
+         let timer;
+         try {
+           await Promise.race([refresh, new Promise(resolve => {
+             timer = setTimeout(resolve, 3000);
+           })]);
+         } finally {
+           clearTimeout(timer);
+         }
        }
+
+       // Also drain on redelivery: the receipt may exist after an earlier sync
+       // failure. syncBookings reads the latest revision in one idempotent tx.
+       if (typeof this.calendarPollStore.syncBookings === 'function') {
+         for (let attempt = 0; attempt < 3; attempt++) {
+           try {
+             await this.calendarPollStore.syncBookings(key);
+             break;
+           } catch (error) {
+             this.log('Training Test: immediate booking sync failed; ' +
+               format(mark(error, 'CALENDAR_SYNC')));
+             const code = (error?.code || '').replace(/^firestore\//, '');
+             if (attempt === 2 || !['unavailable', 'deadline-exceeded', 'aborted',
+                 'auth/network-request-failed'].includes(code)) break;
+             await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+           }
+         }
+       }
+       // Keep the callback queue serialized with maintenance and later edits.
+       await (refresh ?? refreshPoll());
 
        return true;
      });

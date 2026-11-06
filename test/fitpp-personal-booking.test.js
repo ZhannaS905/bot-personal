@@ -14,6 +14,7 @@ const {empty, merge} = require('../src/fitpp-personal/group-period-model');
 const config = require('../src/fitpp-personal/runtime-config');
 const {workoutKey} = require('../src/fitpp-calendar-poll-plan');
 const {CHAT} = require('../src/training-test-firestore');
+const {calendarPollBody} = require('../src/training-test-calendar-body');
 
 const day = '2026-11-04';
 const uuid = '12345678-1234-1234-1234-123456789012';
@@ -54,7 +55,7 @@ async function fixture() {
   const key = workoutKey(workout);
   await store.reserve(workout, {id: uuid, createdAt: clock - 1000});
   await store.finish(key, uuid, 'mid.personal');
-  const service = new Autopost({store: {}, calendarPollStore: store, calendar, calendarMode: true,
+  const service = new Autopost({store: {}, calendarPollStore: store, calendar, calendarMode: true, personalMode: true,
     now: () => new Date(clock), log() {}, api: {answer: async () => {}, editCalendar: async () => {}}});
   const event = (action, id = action) => ({
     update_type: 'message_callback', timestamp: ++clock,
@@ -63,7 +64,7 @@ async function fixture() {
       user: {user_id: 80, is_bot: false, first_name: 'Local'}}
   });
   const bookings = () => db.data.get(config.bookings);
-  return {...db, state, schedule, calendar, store, service, event, now, bookings};
+  return {...db, state, schedule, calendar, store, service, event, now, bookings, key};
 }
 
 test('reads the saved Personal schedule and excludes cancelled sessions', async () => {
@@ -90,6 +91,88 @@ test('Приду writes the exact journal key and operation receipt without touc
     expectedVersion: 0, workout: {id: workout.id, date: day, location: 'zarya'}
   });
   assert.ok(f.paths.every(p => !p.startsWith('fitppTestWorkspaces')));
+});
+
+test('Personal gives the committed vote a MAX edit before starting the journal sync', async () => {
+  const f = await fixture();
+  const calls = [];
+  f.service.api.answer = async () => calls.push('answer');
+  f.service.api.editCalendar = async (poll, {beforePut}) => {
+    await beforePut();
+    calls.push('put');
+    assert.equal(poll.votes['80'], 'Local');
+    assert.match(calendarPollBody(poll).text, /Local/);
+    assert.deepEqual(f.bookings().entries, {});
+  };
+  const syncBookings = f.store.syncBookings;
+  f.store.syncBookings = key => {
+    calls.push('booking');
+    return syncBookings(key);
+  };
+  assert.equal(await f.service.receive(f.event('yes')), true);
+  assert.deepEqual(calls, ['answer', 'put', 'booking']);
+  assert.deepEqual(f.bookings().entries, {[entry]: true});
+});
+
+test('failed Personal PUT leaves a dirty poll and a booked client; maintenance retries the edit', async () => {
+  const f = await fixture();
+  let puts = 0;
+  f.service.api.editCalendar = async (_poll, {beforePut}) => {
+    await beforePut();
+    if (++puts === 1) throw Error('MAX HTTP 503');
+  };
+
+  const event = f.event('yes');
+  await f.service.receive(event);
+  const dirty = await f.store.read(f.key);
+  assert.equal(dirty.votes['80'], 'Local');
+  assert.ok(dirty.displayedRevision < dirty.revision);
+  assert.equal(dirty.editLease, undefined);
+  assert.equal(dirty.bookingSyncPending, false);
+  assert.deepEqual(f.bookings().entries, {[entry]: true});
+
+  await f.service.receive(event);
+  await f.service.refreshCalendarPolls([await f.store.read(f.key)]);
+  const refreshed = await f.store.read(f.key);
+  assert.equal(puts, 2);
+  assert.equal(refreshed.displayedRevision, dirty.revision);
+  assert.equal(f.bookings().revision, 1);
+});
+
+test('Personal journal sync proceeds after the grace period while PUT is still pending', async t => {
+  const f = await fixture();
+  t.mock.timers.enable({apis: ['setTimeout']});
+  const putStarted = Promise.withResolvers();
+  const putResult = Promise.withResolvers();
+  const bookingSynced = Promise.withResolvers();
+  f.service.api.editCalendar = async (_poll, {beforePut}) => {
+    await beforePut();
+    putStarted.resolve();
+    await putResult.promise;
+  };
+  const syncBookings = f.store.syncBookings;
+  f.store.syncBookings = async key => {
+    const result = await syncBookings(key);
+    bookingSynced.resolve();
+    return result;
+  };
+
+  const callback = f.service.receive(f.event('yes'));
+  try {
+    await putStarted.promise;
+    t.mock.timers.tick(2999);
+    await Promise.resolve();
+    assert.deepEqual(f.bookings().entries, {});
+    t.mock.timers.tick(1);
+    await bookingSynced.promise;
+    const pending = await f.store.read(f.key);
+    assert.ok(pending.displayedRevision < pending.revision);
+    assert.deepEqual(f.bookings().entries, {[entry]: true});
+  } finally {
+    putResult.reject(Error('MAX HTTP 503'));
+    await callback;
+  }
+  assert.equal((await f.store.read(f.key)).bookingSyncPending, false);
 });
 
 test('Не приду cancels the exact and unambiguous legacy bookings', async () => {
