@@ -15,7 +15,7 @@ function createCalendarCallbacks({store,calendar,now=Date.now,render}){
   const match=PAYLOAD.exec(u.callback?.payload||'');
   if(!match)return false;
   const [,key,uuid,action]=match,cb=u.callback,m=u.message;
-  if(m?.recipient?.chat_type!=='chat'||String(m.recipient.chat_id)!==CHAT||cb?.user?.is_bot!==false||
+  if(m?.recipient?.chat_type!=='channel'||String(m.recipient.chat_id)!==CHAT||cb?.user?.is_bot!==false||
    !Number.isSafeInteger(cb.user.user_id)||cb.user.user_id<=0||typeof cb.callback_id!=='string'||!cb.callback_id||
    cb.callback_id.length>256)throw Error('CALENDAR_CALLBACK_SCOPE_REFUSED');
   const at=cb.timestamp??u.timestamp;

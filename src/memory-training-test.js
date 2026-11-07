@@ -3,7 +3,7 @@ const { MaxApi } = require('./api');
 const { moscow, times } = require('./schedule');
 const { checkTestBotIdentity, identityAccepted } = require('./test-bot-identity');
 const { TestPublicationAttempts } = require('./test-publication-attempts');
-const CHAT = '-80345864298680';
+const CHAT = '-79450912874680';
 function config(env) {
   if (env.BOT_MODE !== 'test' || env.CHAT_IDS !== CHAT) throw Error('TEST_CONFIG');
   const token = env.TEST_BOT_TOKEN || env.BOT_TOKEN;
@@ -22,7 +22,7 @@ async function guardedApi(c, fetchImpl, { pollScope } = {}) {
   const me = await raw.request('GET', '/me');
   if (!identityAccepted(checkTestBotIdentity(me, c.expectedId))) throw Error('TEST_IDENTITY_REFUSED');
   const chat = await raw.request('GET', `/chats/${CHAT}`);
-  if (String(chat.chat_id) !== CHAT || chat.title !== 'Тест тренировок') throw Error('TEST_CHAT_REFUSED');
+  if (String(chat.chat_id) !== CHAT || chat.title !== 'ТАБАТА запись') throw Error('TEST_CHAT_REFUSED');
   const member = await raw.request('GET', `/chats/${CHAT}/members/me`);
   if (member.user_id !== me.user_id || member.is_bot !== true) throw Error('TEST_MEMBERSHIP_REFUSED');
   if (pollScope && (pollScope.chat !== CHAT || !/^mid\.[a-zA-Z0-9]+$/.test(pollScope.mid || '') || !/^[a-f0-9-]{36}$/.test(pollScope.uuid || ''))) throw Error('POLL_SCOPE_REFUSED');

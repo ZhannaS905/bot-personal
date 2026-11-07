@@ -1,6 +1,6 @@
 'use strict';
 const {createHash,randomUUID}=require('node:crypto');
-const OWNER_UID='lLlMAetSG1aEeJSeBl4F4ypydEh2',CHAT='-80345864298680';
+const OWNER_UID='lLlMAetSG1aEeJSeBl4F4ypydEh2',CHAT='-79450912874680';
 const ROOT='trainingTestAutopostBots';
 const DATE=/^\d{4}-\d{2}-\d{2}$/,UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,MID=/^mid\.[a-zA-Z0-9]+$/;
 function canonical(value){if(Array.isArray(value))return value.map(canonical);if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])]));return value}

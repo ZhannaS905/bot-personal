@@ -27,7 +27,7 @@ async function capability(c,{raw=new MaxApi(c.token)}={}){
  async function verify(){
   if(!identityAccepted(checkTestBotIdentity(await raw.request('GET','/me'),c.expectedId)))throw Error('AUTOPOST_IDENTITY_REFUSED');
   const chat=await raw.request('GET',`/chats/${CHAT}`);
-  if(String(chat.chat_id)!==CHAT||chat.title!=='Тест тренировок')throw Error('AUTOPOST_CHAT_REFUSED');
+  if(String(chat.chat_id)!==CHAT||chat.title!=='ТАБАТА запись')throw Error('AUTOPOST_CHAT_REFUSED');
   const member=await raw.request('GET',`/chats/${CHAT}/members/me`);
   if(member.user_id!==Number(c.expectedId)||member.is_bot!==true)throw Error('AUTOPOST_MEMBERSHIP_REFUSED');
  }
@@ -63,7 +63,7 @@ async function capability(c,{raw=new MaxApi(c.token)}={}){
   if (m?.body?.text !== '/опрос' ||
       !MID.test(m.body?.mid) ||
       String(m.recipient?.chat_id) !== CHAT ||
-      m.recipient?.chat_type !== 'chat' ||
+      m.recipient?.chat_type !== 'channel' ||
       m.sender?.is_bot !== false ||
       !Number.isSafeInteger(m.sender?.user_id) ||
       !Array.isArray(admins) ||
@@ -672,7 +672,7 @@ class Autopost{
    return this.run(async () => {
      const m = u.message;
      if (String(m.recipient?.chat_id) !== CHAT ||
-         m.recipient?.chat_type !== 'chat' ||
+         m.recipient?.chat_type !== 'channel' ||
          m.sender?.is_bot !== false ||
          !Number.isSafeInteger(m.sender?.user_id) ||
          !this.admins.includes(String(m.sender.user_id)) ||
@@ -698,7 +698,7 @@ class Autopost{
 
   if(this.personalMode)return Promise.resolve(false);
   const m=u?.message,cb=u?.callback;
-  if(String(m?.recipient?.chat_id)!==CHAT||m.recipient.chat_type!=='chat'){if(u?.update_type==='message_callback')this.log(JSON.stringify({event:'training_test_callback',stage:'filter',reason:'chat_mismatch'}));return Promise.resolve(false);}
+  if(String(m?.recipient?.chat_id)!==CHAT||m.recipient.chat_type!=='channel'){if(u?.update_type==='message_callback')this.log(JSON.stringify({event:'training_test_callback',stage:'filter',reason:'chat_mismatch'}));return Promise.resolve(false);}
   const match=/^poll:([a-f0-9-]{36}):(yes|cancel)$/.exec(cb?.payload||'');
   // The exact old pilot and private/contact traffic never wait on our queue or database.
   if(match?.[1]===POLL.uuid){this.log(JSON.stringify({event:'training_test_callback',stage:'filter',reason:'historical_pilot_route'}));return Promise.resolve(false);}
