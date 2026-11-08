@@ -25,7 +25,7 @@ async function fixture(start = '2026-11-05T12:00:00+03:00') {
     async request(method, path) {
       if (path === '/me') return me;
       if (path.endsWith('/members/me')) return me;
-      if (path.startsWith('/chats/')) return {chat_id:CHAT, title:'Тест тренировок'};
+      if (path.startsWith('/chats/')) return {chat_id:CHAT, title:'ТАБАТА запись'};
       if (method === 'GET') return message;
       if (method === 'DELETE') {deletes.push(message.body.mid); return {success:true};}
       throw Error('Unexpected request');
@@ -48,6 +48,39 @@ async function fixture(start = '2026-11-05T12:00:00+03:00') {
   return {service, store, key, id, puts, deletes, get message(){return message;},
     move:changes=>{workout={...workout,...changes};}, time:at=>{now=Date.parse(at);}, fail:value=>{fail=value;}};
 }
+
+
+test('calendar PUT accepts absent sender and rejects foreign bot', async () => {
+  for (const [label, sender, allowed] of [
+    ['missing sender', undefined, true],
+    ['own bot', {user_id:123, is_bot:true}, true],
+    ['foreign bot', {user_id:999, is_bot:true}, false]
+  ]) {
+    const f = await fixture();
+    const p = await f.store.read(f.key);
+
+    if (sender === undefined) {
+      delete f.message.sender;
+    } else {
+      f.message.sender = sender;
+    }
+
+    if (allowed) {
+      await f.service.api.editCalendar(p);
+      assert.equal(f.puts.length, 1, label);
+      assert.equal(f.puts[0].format, 'html', label);
+      assert.equal('notify' in f.puts[0], false, label);
+      assert.equal('attachments' in f.puts[0], false, label);
+    } else {
+      await assert.rejects(
+        f.service.api.editCalendar(p),
+        /CALENDAR_EDIT_SCOPE_REFUSED/,
+        label
+      );
+      assert.equal(f.puts.length, 0, label);
+    }
+  }
+});
 
 test('tick moves the existing MID within five minutes and retains the two buttons', async () => {
   const f=await fixture();

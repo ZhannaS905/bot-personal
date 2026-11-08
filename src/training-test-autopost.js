@@ -123,8 +123,9 @@ async function capability(c,{raw=new MaxApi(c.token)}={}){
 
   if (existing?.body?.mid !== p.mid ||
     String(existing?.recipient?.chat_id) !== CHAT ||
-    existing?.sender?.user_id !== Number(c.expectedId) ||
-    existing?.sender?.is_bot !== true ||
+    (existing?.sender != null &&
+      (String(existing.sender.user_id) !== String(c.expectedId) ||
+       existing.sender.is_bot !== true)) ||
     (!expectedButtons && !restoring)) {
 
   console.error('Training Test: calendar edit scope diagnostics ' + JSON.stringify({
@@ -148,8 +149,7 @@ async function capability(c,{raw=new MaxApi(c.token)}={}){
   await raw.edit(p.mid, {
     text: message.text,
     format: message.format,
-    ...(restoring ? {attachments: message.attachments} : {}),
-    notify: false
+    ...(restoring ? {attachments: message.attachments} : {})
   });
 },
 async cancelCalendar(p, {beforePut=async()=>{}}={}) {
@@ -207,8 +207,7 @@ async cancelCalendar(p, {beforePut=async()=>{}}={}) {
   await raw.edit(p.mid, {
     text: message.text,
     format: message.format,
-    attachments: [],
-    notify: false
+    attachments: []
   });
 },
 async sendCalendar(p, message){
