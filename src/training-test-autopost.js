@@ -51,8 +51,9 @@ async function capability(c,{raw=new MaxApi(c.token)}={}){
 
   if (existing?.body?.mid !== p.mid ||
       String(existing?.recipient?.chat_id) !== CHAT ||
-      String(existing?.sender?.user_id) !== String(c.expectedId) ||
-      existing?.sender?.is_bot !== true) {
+      (existing?.sender != null &&
+        (String(existing.sender.user_id) !== String(c.expectedId) ||
+         existing.sender.is_bot !== true))) {
     throw Error('CALENDAR_DELETE_SCOPE_REFUSED');
   }
 
@@ -169,8 +170,9 @@ async cancelCalendar(p, {beforePut=async()=>{}}={}) {
 
   if (existing?.body?.mid !== p.mid ||
       String(existing?.recipient?.chat_id) !== CHAT ||
-      existing?.sender?.user_id !== Number(c.expectedId) ||
-      existing?.sender?.is_bot !== true) {
+      (existing?.sender != null &&
+        (String(existing.sender.user_id) !== String(c.expectedId) ||
+         existing.sender.is_bot !== true))) {
     throw Error('CALENDAR_CANCEL_SCOPE_REFUSED');
   }
 
@@ -446,7 +448,7 @@ class Autopost{
           this.log('Training Test: failed to save deletion review flag.');
         }
       } else {
-        this.log('Training Test: calendar poll deletion failed; retry later.');
+        this.log('Training Test: calendar poll deletion failed: ' + (error?.message || error) + '; retry later.');
       }
     }
     remaining.push(poll);
@@ -486,7 +488,7 @@ class Autopost{
             this.log('Training Test: failed to save deletion review flag.');
           }
         } else {
-          this.log('Training Test: pending deletion unresolved; retry later.');
+          this.log('Training Test: pending deletion unresolved: ' + (error?.message || error) + '; retry later.');
         }
       }
     }

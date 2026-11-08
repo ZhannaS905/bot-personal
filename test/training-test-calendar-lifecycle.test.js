@@ -82,6 +82,36 @@ test('calendar PUT accepts absent sender and rejects foreign bot', async () => {
   }
 });
 
+test('calendar DELETE accepts absent sender and rejects foreign bot', async () => {
+  for (const [label, sender, allowed] of [
+    ['missing sender', undefined, true],
+    ['own bot', {user_id:123, is_bot:true}, true],
+    ['foreign bot', {user_id:999, is_bot:true}, false]
+  ]) {
+    const f = await fixture();
+    const p = await f.store.read(f.key);
+
+    if (sender === undefined) {
+      delete f.message.sender;
+    } else {
+      f.message.sender = sender;
+    }
+
+    if (allowed) {
+      await f.service.api.deleteCalendarPoll({...p, status: 'deletePending'});
+      assert.equal(f.deletes.length, 1, label);
+      assert.equal(f.deletes[0], p.mid, label);
+    } else {
+      await assert.rejects(
+        f.service.api.deleteCalendarPoll({...p, status: 'deletePending'}),
+        /CALENDAR_DELETE_SCOPE_REFUSED/,
+        label
+      );
+      assert.equal(f.deletes.length, 0, label);
+    }
+  }
+});
+
 test('tick moves the existing MID within five minutes and retains the two buttons', async () => {
   const f=await fixture();
   await f.service.tick();
