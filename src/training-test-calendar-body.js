@@ -11,8 +11,8 @@ function calendarPollBody(p){
  const heading=online?'⚡ <b>ТАБАТА | ONLINE</b>':'📍 <b>'+LABELS[w.location]+'</b>';
  const dateBlock='┃ <b>'+escape(date.toUpperCase())+'</b>\n┃ <b>'+escape(w.time)+'</b>';
  const details=online?'\n\n🎥 <b>Яндекс Телемост</b>\n\n↗ <a href="'+LINK+'">Подключиться</a>':'';
- const names=p.order.map((uid,i)=>(i===p.order.length-1?'└─ ':'├─ ')+escape(p.votes[uid]));
- const participants=names.length?'<b>💪🏻 УЧАСТНИКИ ('+names.length+')</b>\n'+names.join('\n'):'🤨 Пока никто не записался!';
+ const names=p.order.map(uid=>escape(p.votes[uid]));
+ const participants=names.length?'<b>💪🏻 УЧАСТНИКИ · '+String(names.length).padStart(2,'0')+'</b>\n\n'+names.join('\n'):'🤨 Пока никто не записался!';
  return {text:(p.cancelled?'❌ <b>Тренировка отменена</b>\n\n':'')+heading+'\n\n'+dateBlock+details+'\n\n'+participants+(p.cancelled?'\n\n🔐 Опрос: '+escape(p.id):''),format:'html',
   attachments:p.cancelled?[]:[{type:'inline_keyboard',payload:{buttons:[[
    {type:'callback',text:'✅ Приду',payload:payload(p,'yes')},
