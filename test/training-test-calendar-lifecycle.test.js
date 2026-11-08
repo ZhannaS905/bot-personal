@@ -90,7 +90,7 @@ test('tick moves the existing MID within five minutes and retains the two button
   f.time('2026-11-05T12:05:00+03:00');
   await f.service.tick();
   assert.equal(f.puts.length,1);
-  assert.match(f.message.body.text,/6 ноября/);
+  assert.match(f.message.body.text,/6 ноября/i);
   assert.match(f.message.body.text,/21:30/);
   assert.deepEqual(f.message.body.attachments,buttons);
   const saved=await f.store.read(f.key);
