@@ -621,9 +621,14 @@ class Autopost{
                throw error;
              }
            }
-         } catch {
-           this.log('Training Test: immediate poll refresh failed; retry later.');
-         }
+} catch (error) {
+  const code = String(error?.message || error?.code || 'UNKNOWN');
+  const safeCode = /^(CALENDAR_[A-Z_]+|MAX_HTTP_\d{3})$/.test(code)
+    ? code
+    : 'UNKNOWN';
+
+  this.log(`Training Test: immediate poll refresh failed [${safeCode}]; retry later.`);
+}
        };
 
        let refresh;
