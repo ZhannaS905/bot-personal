@@ -126,6 +126,14 @@ async function capability(c,{raw=new MaxApi(c.token)}={}){
       existing?.sender?.user_id !== Number(c.expectedId) ||
       existing?.sender?.is_bot !== true ||
       (!expectedButtons && !restoring)) {
+this.log('Training Test: calendar edit scope diagnostics ' + JSON.stringify({
+  midMatches: existing?.body?.mid === p.mid,
+  chatMatches: String(existing?.recipient?.chat_id) === CHAT,
+  senderMatches: existing?.sender?.user_id === Number(c.expectedId),
+  isBot: existing?.sender?.is_bot === true,
+  buttonsMatch: expectedButtons,
+  restoring
+}));
     throw Error('CALENDAR_EDIT_SCOPE_REFUSED');
   }
 
