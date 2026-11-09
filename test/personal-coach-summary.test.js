@@ -149,7 +149,7 @@ test('createCoachSummaryWorker sends summary to coach 2h before workout and prev
     sent[0].body.text,
     'Сегодня в 20:00 (Заря): записано 2 человека.\n\n1. Дмитрий Орлов\n2. Ольга Кузнецова'
   );
-  assert.equal(ledger.status('coach-summary:w-today-zarya'), 'sent');
+  assert.equal(ledger.status('coach-summary-v2:w-today-zarya'), 'sent');
 
   // Second run: should NOT send again (deduplication)
   await worker();
@@ -185,7 +185,7 @@ test('createCoachSummaryWorker handles HTTP 400 rejection and skips sending befo
   });
   await workerEarly();
   assert.equal(called, false);
-  assert.equal(ledger.status('coach-summary:w-rejected'), undefined);
+  assert.equal(ledger.status('coach-summary-v2:w-rejected'), undefined);
 
   // Check 2: 18:00 (due) -> tries to send, gets 400, finishes as 'rejected'
   const inWindowMs = Date.parse('2026-11-09T18:00:00+03:00');
@@ -194,7 +194,7 @@ test('createCoachSummaryWorker handles HTTP 400 rejection and skips sending befo
   });
   await workerDue();
   assert.equal(called, true);
-  assert.equal(ledger.status('coach-summary:w-rejected'), 'rejected');
+  assert.equal(ledger.status('coach-summary-v2:w-rejected'), 'rejected');
 });
 
 test('createCoachSummaryWorker supports coachChatId destination', async t => {
@@ -226,7 +226,17 @@ test('createCoachSummaryWorker supports coachChatId destination', async t => {
   await worker();
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].query, {chat_id: '-100123456789'});
-  assert.equal(ledger.status('coach-summary:w-chat'), 'sent');
+  assert.equal(ledger.status('coach-summary-v2:w-chat'), 'sent');
+});
+
+test('createCoachSummaryWorker defaults raw to new MaxApi(token)', () => {
+  const worker = createCoachSummaryWorker({
+    source: {},
+    ledger: {},
+    token: 'test-token',
+    coachUserId: '5819064'
+  });
+  assert.equal(typeof worker, 'function');
 });
 
 test('source.summaryData correctly integrates with Personal source and returns day workouts and clients', async () => {

@@ -1,5 +1,6 @@
 'use strict';
 
+const {MaxApi} = require('../api');
 const {moscow} = require('../schedule');
 const {workouts, assertWorkspace} = require('./calendar');
 const {projectId, root, main, bookings, trainer, validClientId, ownerUid} = require('./runtime-config');
@@ -110,7 +111,8 @@ function createCoachSummarySource({sdk, raw, validateAuth}) {
 function createCoachSummaryWorker({
   source,
   ledger,
-  raw,
+  token,
+  raw = new MaxApi(token),
   coachUserId,
   coachChatId,
   leadTimeMinutes = 120,
@@ -135,7 +137,7 @@ function createCoachSummaryWorker({
       for (const workout of data.workouts) {
         if (!isWorkoutDueForSummary({workout, nowMs, leadTimeMs})) continue;
 
-        const key = 'coach-summary:' + workout.id;
+        const key = 'coach-summary-v2:' + workout.id;
         const prior = ledger.status(key);
         if (prior) continue;
 
@@ -161,6 +163,7 @@ function createCoachSummaryWorker({
           if (/^MAX HTTP (400|401|403|404|429)$/.test(error?.message)) {
             status = 'rejected';
           }
+          console.error('COACH_SUMMARY_SEND_FAILED:', error?.message || error);
         }
         ledger.finish(key, status);
         report(status);

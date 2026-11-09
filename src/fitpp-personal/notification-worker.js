@@ -5,6 +5,7 @@ const {join} = require('node:path');
 const {createHash} = require('node:crypto');
 const {setTimeout: sleep} = require('node:timers/promises');
 const {connect, settings: sessionSettings} = require('../fitpp-direct-session');
+const {MaxApi} = require('../api');
 const {projectId, root} = require('./runtime-config');
 const {createWorker} = require('./notifications');
 const {createCoachSummaryWorker} = require('./coach-summary');
@@ -44,10 +45,12 @@ async function main(env = process.env) {
   const shutdown = () => stop.abort();
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
-  const tick = createWorker({...config, source, ledger, report: status => console.log('PERSONAL_NOTIFICATION ' + status)});
+  const raw = new MaxApi(config.token);
+  const tick = createWorker({...config, source, ledger, raw, report: status => console.log('PERSONAL_NOTIFICATION ' + status)});
   const tickCoachSummary = config.coachSummaryEnabled
     ? createCoachSummaryWorker({
         ...config,
+        raw,
         source: {forDate: d => source.summaryData(d)},
         ledger,
         report: status => console.log('COACH_SUMMARY ' + status)
