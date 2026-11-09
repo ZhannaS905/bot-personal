@@ -3,7 +3,8 @@
 const {MaxApi} = require('../api');
 const {validateRegistry} = require('../contact-linking');
 const {checkTestBotIdentity, identityAccepted} = require('../test-bot-identity');
-const {ownerUid, projectId, validClientId, root, main, bindings} = require('./runtime-config');
+const {ownerUid, projectId, validClientId, root, main, bindings, bookings, trainer} = require('./runtime-config');
+const {workouts} = require('./calendar');
 
 const collections = ['operations', 'paymentReceipts'];
 const pageSize = 25;
@@ -78,6 +79,8 @@ function createSource({sdk, raw, validateAuth}) {
   if (raw.app.options.projectId !== projectId) throw Error('PERSONAL_PROJECT_REQUIRED');
   const mainRef = sdk.doc(raw, main);
   const bindingRef = sdk.doc(raw, bindings);
+  const bookingsRef = sdk.doc(raw, bookings);
+  const trainerRef = sdk.doc(raw, trainer);
   const confirmed = snap => {
     if (snap.metadata.fromCache || snap.metadata.hasPendingWrites) throw Error('PERSONAL_UNCONFIRMED_READ');
     return snap;
@@ -118,6 +121,22 @@ function createSource({sdk, raw, validateAuth}) {
       const [current, registry] = await Promise.all([state(), read(bindingRef)]);
       await validateAuth();
       return {state: current, registry};
+    },
+    async summaryData(targetDate) {
+      await validateAuth();
+      const [stateDoc, trainerDoc, bookingsDoc] = await Promise.all([
+        state(),
+        read(trainerRef),
+        read(bookingsRef)
+      ]);
+      await validateAuth();
+      const schedule = workouts(stateDoc, trainerDoc);
+      const dayWorkouts = schedule.filter(w => w.date === targetDate && !w.cancelled);
+      return {
+        workouts: dayWorkouts,
+        clients: stateDoc.clients || [],
+        bookings: bookingsDoc || {entries: {}}
+      };
     }
   };
 }

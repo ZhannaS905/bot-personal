@@ -7,6 +7,7 @@ const {setTimeout: sleep} = require('node:timers/promises');
 const {connect, settings: sessionSettings} = require('../fitpp-direct-session');
 const {projectId, root} = require('./runtime-config');
 const {createWorker} = require('./notifications');
+const {createCoachSummaryWorker} = require('./coach-summary');
 const {openLedger} = require('./notification-ledger');
 
 function settings(env) {
@@ -22,7 +23,14 @@ function settings(env) {
       !env.FITPP_PERSONAL_NOTIFICATION_STATE_DIR) throw Error('PERSONAL_NOTIFICATION_SETTINGS_REFUSED');
   sessionSettings(env, {notificationsOnly: true});
   const scope = createHash('sha256').update(JSON.stringify([projectId, root, botId])).digest('hex');
-  return {token, botId, start, scope, directory: env.FITPP_PERSONAL_NOTIFICATION_STATE_DIR};
+  const coachSummaryEnabled = env.FITPP_COACH_SUMMARY_ENABLED === 'true';
+  const coachUserId = env.COACH_MAX_USER_ID || env.TEST_ADMIN_IDS || '5819064';
+  const coachChatId = env.COACH_CHAT_ID;
+  const leadTimeMinutes = Number(env.COACH_SUMMARY_LEAD_MINUTES || '120');
+  return {
+    token, botId, start, scope, directory: env.FITPP_PERSONAL_NOTIFICATION_STATE_DIR,
+    coachSummaryEnabled, coachUserId, coachChatId, leadTimeMinutes
+  };
 }
 
 async function main(env = process.env) {
@@ -37,10 +45,22 @@ async function main(env = process.env) {
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
   const tick = createWorker({...config, source, ledger, report: status => console.log('PERSONAL_NOTIFICATION ' + status)});
+  const tickCoachSummary = config.coachSummaryEnabled
+    ? createCoachSummaryWorker({
+        ...config,
+        source: {forDate: d => source.summaryData(d)},
+        ledger,
+        report: status => console.log('COACH_SUMMARY ' + status)
+      })
+    : null;
   try {
     while (!stop.signal.aborted) {
       try { await tick(); }
       catch { console.error('PERSONAL_NOTIFICATION_TICK_FAILED'); }
+      if (tickCoachSummary) {
+        try { await tickCoachSummary(); }
+        catch { console.error('COACH_SUMMARY_TICK_FAILED'); }
+      }
       await sleep(10000, undefined, {signal: stop.signal}).catch(() => {});
     }
   } finally {
