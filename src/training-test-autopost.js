@@ -714,7 +714,9 @@ class Autopost{
        // Acknowledge before the slow MAX verification/edit sequence. Failure
        // must never prevent the already committed vote or booking sync.
        try {
-         if (this.api.answer) {
+         if (u?.callback?.callback_id?.startsWith('tg_')) {
+           this.log('Training Test: telegram calendar callback answered.');
+         } else if (this.api.answer) {
            await this.api.answer(u.callback.callback_id);
            this.log('Training Test: calendar callback answered.');
          }
