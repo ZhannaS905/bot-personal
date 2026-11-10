@@ -83,7 +83,7 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
   },
   async finish(key,id,mid){if(!MID.test(mid))throw Error('CALENDAR_POLL_MID_REFUSED');return tx(key,({p,set})=>{
    if(p?.id!==id||p.status!=='reserved')throw Error('CALENDAR_POLL_RESERVATION_REFUSED');
-   set({...p,status:'published',mid});return true;
+   set({...p,status:'published',mid,displayedRevision:p.revision});return true;
   })},
   async beginDelete(key,id,mid){
    if(!UUID.test(id)||!MID.test(mid))throw Error('CALENDAR_DELETE_REFUSED');
@@ -288,7 +288,7 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
   async syncSiteAttendees(key, bookedClients, render = require('./training-test-calendar-body').calendarPollBody) {
     if (!Array.isArray(bookedClients)) return false;
     return tx(key, async ({transaction, p, set}) => {
-      if (!p || p.status !== 'published' || p.cancelled === true) return false;
+      if (!p || (p.status !== 'published' && p.status !== 'reserved') || p.cancelled === true) return false;
 
       const snap = await transaction.get(sdk.doc(raw, bindingsPath));
       const registry = snap.exists() ? snap.data() : {version: 1, botId: Number(botId), bindings: []};

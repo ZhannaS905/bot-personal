@@ -309,8 +309,19 @@ class Autopost{
    const reserved = await this.calendarPollStore.reserve(workout, candidate);
    if (!reserved) return false;
 
+   if (this.personalMode && typeof this.calendar?.bookedClients === 'function' && typeof this.calendarPollStore?.syncSiteAttendees === 'function') {
+     try {
+       const booked = await this.calendar.bookedClients(workout);
+       if (Array.isArray(booked) && booked.length > 0) {
+         await this.calendarPollStore.syncSiteAttendees(key, booked);
+       }
+     } catch (err) {
+       this.log('Training Test: initial site bookings sync error: ' + (err?.message || err));
+     }
+   }
+
    const poll = await this.calendarPollStore.read(key);
-   if (poll?.id !== candidate.id || poll.status !== 'reserved') {
+   if (poll?.id !== candidate.id || (poll.status !== 'reserved' && poll.status !== 'published')) {
      throw Error('CALENDAR_RESERVATION_REFUSED');
    }
 

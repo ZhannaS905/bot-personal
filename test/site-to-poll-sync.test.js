@@ -134,3 +134,88 @@ test('Site-to-poll sync: adding client on website adds name to poll in real-time
   assert.equal(pollAfterElenaRemoved.order.length, 1);
   assert.equal(pollAfterElenaRemoved.votes[pollAfterElenaRemoved.order[0]], 'Дмитрий Соколов');
 });
+
+test('Site-to-poll sync: client booked before 10:00 is immediately included in the initial published poll', async () => {
+  const db = database(config.projectId);
+  const validateAuth = async () => {};
+  const metadata = {ownerUid: config.ownerUid, datasetId: 'personal-v1', schemaVersion: 1};
+
+  const state = {
+    ...metadata,
+    _fitppRevision: 1,
+    workouts: {},
+    clients: [
+      { id: 'client_norika', name: 'Норика Б.', phone: '+7 930 941-23-94', locations: ['zarya'] }
+    ]
+  };
+
+  const schedule = empty(config.ownerUid);
+  schedule.periods.push({ id: 'local', group: 'zarya', start: day, end: day, slots: [{ day: 3, time: workout.time }] });
+  schedule.workouts.push(structuredClone(workout));
+
+  // Norika was already marked as booked on the website in advance
+  const bookingsData = {
+    ...metadata,
+    entries: {
+      [JSON.stringify(['client_norika', workout.id])]: true
+    },
+    versions: {},
+    revision: 1
+  };
+
+  db.data.set(config.main, structuredClone(state));
+  db.data.set(config.trainer, { groupScheduleV1: schedule });
+  db.data.set(config.bookings, bookingsData);
+
+  const clock = Date.parse(day + 'T07:00:00Z'); // 10:00 MSK
+  const now = () => clock;
+  const calendar = createPersonalCalendar({ sdk: db.sdk, raw: db.raw, validateAuth });
+  const store = createCalendarPollStore({
+    sdk: db.sdk, raw: db.raw, validateAuth, now,
+    botId: '123', writeEnabled: () => true, bookingSyncEnabled: () => true
+  });
+
+  const sentMaxMessages = [];
+  const sentTgMessages = [];
+  const mockApi = {
+    verify: async () => {},
+    sendCalendar: async (p, msg) => {
+      sentMaxMessages.push({ p, msg });
+      return 'mid.norikatest';
+    }
+  };
+  const mockTgBridge = {
+    start: () => {},
+    stop: () => {},
+    sendCalendar: async (p, msg) => {
+      sentTgMessages.push({ p, msg });
+      return 1001;
+    }
+  };
+
+  const autopost = new Autopost({
+    store: {},
+    calendarPollStore: store,
+    calendar,
+    calendarMode: true,
+    personalMode: true,
+    now: () => new Date(clock),
+    log() {},
+    api: mockApi,
+    telegramBridge: mockTgBridge
+  });
+
+  const published = await autopost.publishCalendar(workout);
+  assert.equal(published, true);
+
+  // Both MAX and Telegram must have been sent with Norika already in the participant list!
+  assert.equal(sentMaxMessages.length, 1);
+  assert.equal(sentTgMessages.length, 1);
+  assert.match(sentMaxMessages[0].msg.text, /Норика Б\./);
+  assert.match(sentTgMessages[0].msg.text, /Норика Б\./);
+
+  const poll = await store.read(workoutKey(workout));
+  assert.equal(poll.status, 'published');
+  assert.equal(poll.order.length, 1);
+  assert.equal(poll.votes[poll.order[0]], 'Норика Б.');
+});
