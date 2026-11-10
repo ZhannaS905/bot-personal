@@ -244,6 +244,16 @@ async sendCalendar(p, message){
   const keyboards=(m?.body?.attachments||[]).filter(a=>a.type==='inline_keyboard'),buttons=keyboards.flatMap(a=>(a.payload?.buttons||[]).flat());
   if(m?.body?.mid!==p.mid||String(m?.recipient?.chat_id)!==CHAT||m?.sender?.user_id!==Number(c.expectedId)||m?.sender?.is_bot!==true||keyboards.length!==1||buttons.length!==2||!['yes','cancel'].every(action=>buttons.filter(b=>b.type==='callback'&&b.payload===`poll:${p.id}:${action}`).length===1))throw Error('AUTOPOST_EDIT_SCOPE_REFUSED');
   const b=pollBody(p);await beforePut();await raw.edit(p.mid,{text:b.text,format:b.format,notify:false});
+ },
+ async sendPersonal(userId, text){
+  if(!Number.isSafeInteger(Number(userId))||Number(userId)<=0)return false;
+  try{
+   await verify();
+   await raw.request('POST','/messages',{user_id:Number(userId)},{text,format:'html',notify:true});
+   return true;
+  }catch{
+   return false;
+  }
  }};
 }
 function pollBody(p){return body({...p,votes:new Map(p.order.map(uid=>[uid,p.votes[uid]]))})}
@@ -541,6 +551,14 @@ class Autopost{
         poll.workout?.location !== workout.location ||
         Boolean(poll.cancelled) !== Boolean(workout.cancelled);
 
+      const isCancellation = Boolean(workout.cancelled) && !poll.cancelled;
+      const isReschedule = !workout.cancelled && (
+        poll.workout?.date !== workout.date ||
+        poll.workout?.time !== workout.time ||
+        poll.workout?.location !== workout.location
+      );
+      const oldWorkout = structuredClone(poll.workout);
+
       let current = poll;
       if (changed) {
         const synced = await at('CALENDAR_SYNC', () =>
@@ -589,6 +607,27 @@ class Autopost{
               this.log('Training Test: telegram cancel failed: ' + (err?.message || err));
             }
           }
+          if (isCancellation) {
+            try {
+              const registry = typeof this.calendarPollStore?.getRegistry === 'function'
+                ? await this.calendarPollStore.getRegistry()
+                : null;
+              const { notifyAttendees } = require('./fitpp-workout-notifications');
+              await notifyAttendees({
+                poll: claimed,
+                changeType: 'cancellation',
+                oldWorkout,
+                newWorkout: workout,
+                calendar: this.calendar,
+                api: this.api,
+                telegramBridge: this.telegramBridge,
+                registry,
+                log: msg => this.log(msg)
+              });
+            } catch (err) {
+              this.log('Training Test: cancellation notification failed: ' + (err?.message || err));
+            }
+          }
         } else {
           await this.api.editCalendar(claimed, {beforePut});
           if (this.telegramBridge) {
@@ -597,6 +636,27 @@ class Autopost{
               await this.telegramBridge.editCalendar(claimed, calendarPollBody(claimed));
             } catch (err) {
               this.log('Training Test: telegram edit failed: ' + (err?.message || err));
+            }
+          }
+          if (isReschedule) {
+            try {
+              const registry = typeof this.calendarPollStore?.getRegistry === 'function'
+                ? await this.calendarPollStore.getRegistry()
+                : null;
+              const { notifyAttendees } = require('./fitpp-workout-notifications');
+              await notifyAttendees({
+                poll: claimed,
+                changeType: 'reschedule',
+                oldWorkout,
+                newWorkout: workout,
+                calendar: this.calendar,
+                api: this.api,
+                telegramBridge: this.telegramBridge,
+                registry,
+                log: msg => this.log(msg)
+              });
+            } catch (err) {
+              this.log('Training Test: reschedule notification failed: ' + (err?.message || err));
             }
           }
         }
@@ -843,6 +903,9 @@ const calendarMode=env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true';
      chatId: env.TELEGRAM_CHAT_ID,
      adminIds: env.TELEGRAM_ADMIN_IDS ? env.TELEGRAM_ADMIN_IDS.split(',').map(s => s.trim()).filter(Boolean) : c.admins,
      stateDir: env.STATE_DIR || (process.platform === 'linux' ? '/data' : 'data'),
+     clientFinder: personalCalendar && typeof personalCalendar.findClientByPhone === 'function'
+       ? phone => personalCalendar.findClientByPhone(phone)
+       : null,
      log: console.log,
      onError: console.error
    });

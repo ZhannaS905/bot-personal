@@ -46,7 +46,22 @@ async function main(env = process.env) {
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
   const raw = new MaxApi(config.token);
-  const tick = createWorker({...config, source, ledger, raw, report: status => console.log('PERSONAL_NOTIFICATION ' + status)});
+  let telegramApi = null;
+  if (env.TELEGRAM_BOT_TOKEN) {
+    const { TelegramApi } = require('../telegram-api');
+    telegramApi = new TelegramApi(env.TELEGRAM_BOT_TOKEN);
+  }
+  const { getTelegramBindings } = require('../telegram-bindings');
+  const telegramBindings = getTelegramBindings(config.directory || env.STATE_DIR || 'data');
+  const tick = createWorker({
+    ...config,
+    source,
+    ledger,
+    raw,
+    telegramApi,
+    telegramBindings,
+    report: status => console.log('PERSONAL_NOTIFICATION ' + status)
+  });
   const tickCoachSummary = config.coachSummaryEnabled
     ? createCoachSummaryWorker({
         ...config,

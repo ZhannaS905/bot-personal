@@ -152,7 +152,17 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
           for (const uid of pending) {
             const desired = Object.hasOwn(p.votes, uid);
             const previous = handled[uid] ?? p.bookingSyncedClients?.[uid];
-            const linked = resolveClient(registry, uid, botId, personalConfig.validClientId);
+            let linked = resolveClient(registry, uid, botId, personalConfig.validClientId);
+            if (!linked) {
+              try {
+                const { getTelegramBindings } = require('./telegram-bindings');
+                const tb = getTelegramBindings(process.env.STATE_DIR || (process.platform === 'linux' ? '/data' : 'data'));
+                const tgClientId = tb.getClientId(uid);
+                if (tgClientId && (!personalConfig?.validClientId || personalConfig.validClientId(tgClientId))) {
+                  linked = tgClientId;
+                }
+              } catch {}
+            }
             // Cancel the existing booking even if the contact is now linked elsewhere.
             const clientId = desired ? linked : (previous?.clientId ?? previous ?? linked);
             if (!clientId) continue;
@@ -198,7 +208,14 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
       let unresolved = false;
 
       for (const uid of Object.keys(p.votes)) {
-        const clientId = resolveClient(registry, uid, botId);
+        let clientId = resolveClient(registry, uid, botId);
+        if (!clientId) {
+          try {
+            const { getTelegramBindings } = require('./telegram-bindings');
+            const tb = getTelegramBindings(process.env.STATE_DIR || (process.platform === 'linux' ? '/data' : 'data'));
+            clientId = tb.getClientId(uid);
+          } catch {}
+        }
         resolved.set(uid, clientId);
         if (!clientId) unresolved = true;
       }
@@ -281,6 +298,14 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
         if (binding?.maxUserId && /^[1-9]\d*$/.test(String(binding.maxUserId))) {
           return String(binding.maxUserId);
         }
+        try {
+          const { getTelegramBindings } = require('./telegram-bindings');
+          const tb = getTelegramBindings(process.env.STATE_DIR || (process.platform === 'linux' ? '/data' : 'data'));
+          const tgUserId = tb.getTgUserId(clientId);
+          if (tgUserId && /^[1-9]\d*$/.test(String(tgUserId))) {
+            return String(tgUserId);
+          }
+        } catch {}
         let hash = 0;
         for (let i = 0; i < clientId.length; i++) {
           hash = ((hash << 5) - hash + clientId.charCodeAt(i)) | 0;
@@ -339,6 +364,14 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
   async releaseEdit(key,token){return tx(key,({p,set})=>{
    if(p?.editLease?.token===token){const next={...p};delete next.editLease;set(next)}return false;
   })},
+  async getRegistry(){
+   try{
+    const snap=await sdk.getDocFromServer(sdk.doc(raw,bindingsPath));
+    return snap.exists()?snap.data():{version:1,botId:Number(botId),bindings:[]};
+   }catch{
+    return {version:1,botId:Number(botId),bindings:[]};
+   }
+  },
   close(){}
  };
 }

@@ -12,6 +12,8 @@ class TelegramBridge {
     adminIds = [],
     stateDir = 'data',
     api = null,
+    clientFinder = null,
+    bindings = null,
     log = console.log,
     onError = console.error
   } = {}) {
@@ -22,9 +24,14 @@ class TelegramBridge {
     this.stateFile = path.join(this.stateDir, 'telegram-polls.json');
     this.log = log;
     this.onError = onError;
+    this.clientFinder = clientFinder;
+
+    const { getTelegramBindings } = require('./telegram-bindings');
+    this.bindings = bindings || getTelegramBindings(this.stateDir);
 
     this.api = api || (this.token ? new TelegramApi(this.token) : null);
     this.poller = null;
+    this.knownTelegramUsers = new Set();
 
     // In-memory mappings (also persisted to stateFile)
     // key -> { tgMessageId, pollId, date }
@@ -147,6 +154,35 @@ class TelegramBridge {
     return this.editCalendar(poll, message);
   }
 
+  async sendPersonal(clientIdOrUserId, text) {
+    if (!this.enabled || !clientIdOrUserId) return false;
+    let chatId = this.bindings.getRecord(clientIdOrUserId)?.chatId;
+    if (!chatId) {
+      const tgUserId = this.bindings.getTgUserId(clientIdOrUserId);
+      if (tgUserId) chatId = this.bindings.getRecord(tgUserId)?.chatId || tgUserId;
+    }
+    if (!chatId && /^[1-9]\d*$/.test(String(clientIdOrUserId))) {
+      chatId = String(clientIdOrUserId);
+    }
+    if (!chatId) return false;
+
+    try {
+      await this.api.send(chatId, { text });
+      return true;
+    } catch (err) {
+      this.onError(`[Telegram] Ошибка отправки личного сообщения в ${chatId}: ${err?.message || err}`);
+      return false;
+    }
+  }
+
+  isTelegramUser(userId) {
+    if (!userId) return false;
+    const s = String(userId);
+    return this.knownTelegramUsers.has(s) ||
+      Boolean(this.bindings?.getRecord(s)) ||
+      Boolean(this.bindings?.getTgUserId(s));
+  }
+
   start({ onAdminPoll, onCallback, getActivePoll } = {}) {
     if (!this.enabled) {
       this.log('[Telegram] TelegramBot не сконфигурирован (пропущен токен или отключен).');
@@ -163,8 +199,89 @@ class TelegramBridge {
         const senderId = String(msg.from?.id);
         const text = msg.text?.trim() || '';
 
+        if (senderId) {
+          this.knownTelegramUsers.add(senderId);
+        }
+
         // Helpful discovery log: prints chat ID on any incoming message
         this.log(`[Telegram] Сообщение из чата "${chatTitle}" (ID: ${chatId}) от пользователя ${senderId}: "${text}"`);
+
+        // Handle private dialogs with the bot: contact linking (/start and contact sharing)
+        if (msg.chat?.type === 'private') {
+          if (text === '/start') {
+            const bound = this.bindings.getRecord(senderId);
+            if (bound && bound.name) {
+              await this.api.send(chatId, {
+                text: `Здравствуйте, <b>${bound.name}</b>!\n\nВаш Telegram уже привязан к профилю FitPP Personal.\nПри записи на тренировки через опрос ваши визиты учитываются автоматически, а сюда приходят уведомления об абонементе.\n\nЕсли хотите привязать другой номер, нажмите кнопку ниже:`,
+                reply_markup: {
+                  keyboard: [[{ text: '📱 Поделиться номером телефона', request_contact: true }]],
+                  resize_keyboard: true,
+                  one_time_keyboard: true
+                }
+              });
+            } else {
+              await this.api.send(chatId, {
+                text: 'Здравствуйте!\n\nПоделитесь своим номером телефона, чтобы связать ваш Telegram с клиентским профилем в FitPP Personal.',
+                reply_markup: {
+                  keyboard: [[{ text: '📱 Поделиться номером телефона', request_contact: true }]],
+                  resize_keyboard: true,
+                  one_time_keyboard: true
+                }
+              });
+            }
+            return;
+          }
+
+          if (msg.contact) {
+            const contact = msg.contact;
+            if (contact.user_id && String(contact.user_id) !== senderId) {
+              await this.api.send(chatId, {
+                text: '⚠️ Пожалуйста, поделитесь своим собственным номером телефона с помощью кнопки ниже.',
+                reply_markup: {
+                  keyboard: [[{ text: '📱 Поделиться номером телефона', request_contact: true }]],
+                  resize_keyboard: true,
+                  one_time_keyboard: true
+                }
+              });
+              return;
+            }
+
+            const rawPhone = contact.phone_number;
+            const { phone } = require('./contact-linking');
+            const norm = phone(rawPhone);
+
+            let client = null;
+            if (typeof this.clientFinder === 'function') {
+              try {
+                client = await this.clientFinder(norm || rawPhone);
+              } catch (err) {
+                this.onError('[Telegram] Ошибка поиска клиента по номеру: ' + (err?.message || err));
+              }
+            }
+
+            if (client && client.id) {
+              const clientName = client.name || `Клиент #${client.id}`;
+              this.bindings.bind(senderId, {
+                clientId: client.id,
+                name: clientName,
+                phone: rawPhone,
+                chatId
+              });
+              this.log(`[Telegram] Пользователь ${senderId} успешно привязан к клиенту ${client.id} (${clientName})`);
+              await this.api.send(chatId, {
+                text: `✅ Привязка успешно сохранена!\n\nВы привязаны к профилю: <b>${clientName}</b>.\nТеперь при нажатии «✅ Приду» в опросах тренировок ваше посещение будет автоматически учитываться на сайте FitPP, а также сюда будут приходить уведомления об абонементе.`,
+                reply_markup: { remove_keyboard: true }
+              });
+            } else {
+              this.log(`[Telegram] Номер ${rawPhone} не найден среди клиентов FitPP`);
+              await this.api.send(chatId, {
+                text: `❌ Номер <b>${rawPhone}</b> не найден среди клиентов FitPP Personal.\n\nПроверьте, что в вашей карточке на сайте указан этот же номер телефона, или обратитесь к тренеру.`,
+                reply_markup: { remove_keyboard: true }
+              });
+            }
+            return;
+          }
+        }
 
         if (text === '/опрос') {
           if (this.chatId && chatId !== this.chatId) {
@@ -195,6 +312,8 @@ class TelegramBridge {
         const fullPayload = this.expandTelegramPayload(data);
         const sender = cq.from;
         if (!sender || sender.is_bot) return;
+
+        this.knownTelegramUsers.add(String(sender.id));
 
         // Immediately acknowledge button click so spinner stops in Telegram
         try {

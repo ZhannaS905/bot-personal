@@ -62,11 +62,12 @@ class TelegramApi {
     return undefined;
   }
 
-  async send(chatId, message, { disableLinkPreview = false, payloadTransformer } = {}) {
+  async send(chatId, message, { disableLinkPreview = false, payloadTransformer, replyMarkup } = {}) {
     const text = typeof message === 'string' ? message : message.text;
-    const replyMarkup = typeof message === 'object' && message.attachments
+    const formattedMarkup = typeof message === 'object' && message.attachments
       ? this.formatKeyboard(message.attachments, payloadTransformer)
-      : message.reply_markup;
+      : (typeof message === 'object' ? message.reply_markup : undefined);
+    const finalMarkup = replyMarkup || formattedMarkup;
 
     const payload = {
       chat_id: chatId,
@@ -74,8 +75,8 @@ class TelegramApi {
       parse_mode: 'HTML',
       disable_web_page_preview: disableLinkPreview
     };
-    if (replyMarkup) {
-      payload.reply_markup = replyMarkup;
+    if (finalMarkup) {
+      payload.reply_markup = finalMarkup;
     }
 
     const result = await this.request('POST', 'sendMessage', payload);

@@ -141,7 +141,7 @@ function createSource({sdk, raw, validateAuth}) {
   };
 }
 
-function createWorker({source, ledger, token, botId, raw = new MaxApi(token), report = () => {}}) {
+function createWorker({source, ledger, token, botId, raw = new MaxApi(token), telegramApi = null, telegramBindings = null, report = () => {}}) {
   let running = false;
   return async function tick() {
     if (running) return;
@@ -164,21 +164,47 @@ function createWorker({source, ledger, token, botId, raw = new MaxApi(token), re
           if (state._fitppRevision < row.data.revision) throw Error('PERSONAL_CONTEXT_BEHIND');
           const target = validateRegistry(registry, botId, validClientId)
             .bindings.find(b => b.clientId === event.clientId && b.notificationsEnabled);
-          if (!target || !isCurrent(state, event)) {
+          const tgUserId = telegramBindings ? telegramBindings.getTgUserId(event.clientId) : null;
+          const tgRecord = tgUserId ? telegramBindings.getRecord(tgUserId) : null;
+          const hasTarget = Boolean(target || tgRecord);
+          if (!hasTarget || !isCurrent(state, event)) {
             // Record skips too, so a crash or a new binding cannot revive this event.
-            if (ledger.claim(key)) ledger.finish(key, target ? 'stale' : 'unlinked');
-            report(target ? 'stale' : 'unlinked');
+            if (ledger.claim(key)) ledger.finish(key, hasTarget ? 'stale' : 'unlinked');
+            report(hasTarget ? 'stale' : 'unlinked');
             continue;
           }
           const body = {text: format(event), notify: true};
           if (!ledger.claim(key)) continue;
-          let status = 'uncertain';
-          try {
-            const result = await raw.request('POST', '/messages', {user_id: target.maxUserId}, body);
-            if (typeof result.message?.body?.mid === 'string' && result.message.body.mid) status = 'sent';
-          } catch (error) {
-            if (/^MAX HTTP (400|401|403|404|429)$/.test(error?.message)) status = 'rejected';
+
+          let maxStatus = null;
+          let tgStatus = null;
+
+          if (target) {
+            try {
+              const result = await raw.request('POST', '/messages', {user_id: target.maxUserId}, body);
+              if (typeof result.message?.body?.mid === 'string' && result.message.body.mid) maxStatus = 'sent';
+            } catch (error) {
+              if (/^MAX HTTP (400|401|403|404|429)$/.test(error?.message)) maxStatus = 'rejected';
+            }
           }
+
+          if (tgRecord && telegramApi) {
+            try {
+              const chatId = tgRecord.chatId || tgRecord.userId || tgUserId;
+              const res = await telegramApi.send(chatId, { text: format(event) });
+              if (res?.message_id) tgStatus = 'sent';
+            } catch {
+              tgStatus = 'rejected';
+            }
+          }
+
+          let status = 'uncertain';
+          if (maxStatus === 'sent' || tgStatus === 'sent') {
+            status = 'sent';
+          } else if ((target ? maxStatus === 'rejected' : true) && (tgRecord ? tgStatus === 'rejected' : true)) {
+            status = 'rejected';
+          }
+
           ledger.finish(key, status);
           report(status);
         }

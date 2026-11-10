@@ -48,6 +48,17 @@ function createPersonalCalendar({sdk, raw, validateAuth}) {
       if (typeof id !== 'string' || !id) throw Error('CALENDAR_ID_REFUSED');
       return (await read()).find(workout => workout.id === id) || null;
     },
+    async findClientByPhone(phoneNumber) {
+      const { phone } = require('../contact-linking');
+      const norm = phone(phoneNumber);
+      if (!norm) return null;
+      await validateAuth();
+      const stateSnap = await sdk.getDocFromServer(sdk.doc(raw, main));
+      await validateAuth();
+      const clients = (stateSnap.data()?.clients || []).filter(c => !c.archivedAt);
+      const matches = clients.filter(c => phone(c.phone) === norm);
+      return matches.length === 1 ? matches[0] : null;
+    },
     async bookedClients(workout) {
       if (!workout?.id) return [];
       await validateAuth();
