@@ -11,7 +11,23 @@ function loadConfig(env = process.env) {
   if (!adminIds.length || !chatIds.length) throw new Error('ADMIN_IDS and CHAT_IDS required');
   const port = Number(env.PORT || 8080);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
-  return { token: env.BOT_TOKEN, secret: env.WEBHOOK_SECRET, adminIds, chatIds, port,
-    stateDir: path.resolve(env.STATE_DIR || 'data') };
+
+  const telegramToken = env.TELEGRAM_BOT_TOKEN ? env.TELEGRAM_BOT_TOKEN.trim() : null;
+  const telegramChatId = env.TELEGRAM_CHAT_ID ? env.TELEGRAM_CHAT_ID.trim() : null;
+  const telegramAdminIds = env.TELEGRAM_ADMIN_IDS ? ids(env.TELEGRAM_ADMIN_IDS) : [];
+
+  return {
+    token: env.BOT_TOKEN,
+    secret: env.WEBHOOK_SECRET,
+    adminIds,
+    chatIds,
+    port,
+    stateDir: path.resolve(env.STATE_DIR || 'data'),
+    telegram: telegramToken ? {
+      token: telegramToken,
+      chatId: telegramChatId,
+      adminIds: telegramAdminIds
+    } : null
+  };
 }
 module.exports = { loadConfig, ids };

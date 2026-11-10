@@ -9,7 +9,7 @@ const timestamp=Date.parse('2026-11-02T17:00:00Z')-1000;
 function event(action='yes'){return {update_type:'message_callback',timestamp,callback:{
  payload:'cal:'+key+':'+uuid+':'+action,callback_id:'evt-1',timestamp,
  user:{user_id:12,is_bot:false,first_name:'Test'}
- },message:{recipient:{chat_type:'chat',chat_id:'-80345864298680'},body:{mid}}};}
+ },message:{recipient:{chat_type:'channel',chat_id:'-79450912874680'},body:{mid}}};}
 const poll={id:uuid,key,mid,status:'published',createdAt:timestamp-10000,workout};
 test('calendar callback applies vote to exact workout and scope',async()=>{
  const calls=[];

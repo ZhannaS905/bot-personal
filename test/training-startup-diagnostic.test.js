@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const {at,format}=require('../src/training-startup-diagnostic');
 const {main}=require('../src/fitpp-test-bridge');
 const secret='PRIVATE token HMAC https://private.invalid персональные данные\nforged log';
-const scope={chat:'-80345864298680',user:'1234',mid:'mid.mock001',uuid:'11111111-2222-4333-8444-555555555555'};
+const scope={chat:'-79450912874680',user:'1234',mid:'mid.mock001',uuid:'11111111-2222-4333-8444-555555555555'};
 const env={BOT_MODE:'test',CHAT_IDS:scope.chat,TEST_BOT_TOKEN:'mock-token',TEST_EXPECTED_BOT_ID:'1',WEBHOOK_SECRET:'mock_secret_123456',FITPP_BRIDGE_ENABLED:'true',AUTO_PUBLISH:'false',TEST_ALLOW_SEND:'false',TEST_ALLOW_EDIT:'false',TEST_ALLOW_DELETE:'false',FITPP_BRIDGE_HMAC_KEY:'a'.repeat(64),FITPP_BRIDGE_URL:'https://example.test/bot/update',FITPP_BRIDGE_SCOPE:JSON.stringify(scope),FITPP_POLL_SYNC_ENABLED:'true'};
 const view={...scope,date:'2026-10-26',location:'zarya',time:'20:00',revision:1,participants:[]};
 const failure=()=>Object.assign(Error(secret),{code:secret,stack:secret,cause:{code:secret},stage:secret});

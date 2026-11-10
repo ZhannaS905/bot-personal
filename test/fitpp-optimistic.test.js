@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createOptimistic}=require('../src/fitpp-optimistic'),{createPollSync,render,plainText}=require('../src/fitpp-poll-sync'),{startReconciliation}=require('../src/fitpp-test-bridge');
-const scope={chat:'-80345864298680',user:'5819064',mid:'mid.mock1',uuid:'11111111-2222-4333-8444-555555555555'};
+const scope={chat:'-79450912874680',user:'5819064',mid:'mid.mock1',uuid:'11111111-2222-4333-8444-555555555555'};
 const self={clientId:'demo-client-1',name:'Вымышленный клиент'},other={clientId:'demo-client-2',name:'Другой тестовый клиент'};
 function event(choice='yes',at=100000,id='one'){return {update_type:'message_callback',timestamp:at,callback:{callback_id:id,payload:`poll:${scope.uuid}:${choice}`,user:{user_id:5819064,is_bot:false}},message:{recipient:{chat_id:scope.chat,chat_type:'chat'},body:{mid:scope.mid}}}}
 function fixture(initial=[]){

@@ -59,7 +59,7 @@ async function fixture() {
     now: () => new Date(clock), log() {}, api: {answer: async () => {}, editCalendar: async () => {}}});
   const event = (action, id = action) => ({
     update_type: 'message_callback', timestamp: ++clock,
-    message: {recipient: {chat_id: CHAT, chat_type: 'chat'}, body: {mid: 'mid.personal'}},
+    message: {recipient: {chat_id: CHAT, chat_type: 'channel'}, body: {mid: 'mid.personal'}},
     callback: {callback_id: id, payload: `cal:${key}:${uuid}:${action}`,
       user: {user_id: 80, is_bot: false, first_name: 'Local'}}
   });

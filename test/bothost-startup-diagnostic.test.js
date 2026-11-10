@@ -38,7 +38,7 @@ test('MAX chat and membership failures retain their fixed stages using mocks onl
     let calls = 0;
     await assert.rejects(createBothostTestApi({ token: secret, expectedBotId: '1' }, async () => {
       if (++calls === failedCall) throw Error(secret);
-      return { ok: true, json: async () => calls === 1 ? me : { chat_id: '-80345864298680', title: 'Тест тренировок' } };
+      return { ok: true, json: async () => calls === 1 ? me : { chat_id: '-79450912874680', title: 'ТАБАТА запись' } };
     }), error => { assert.equal(safeStartupDiagnostic(error), `STARTUP_REFUSED stage=${stage} code=API_ERROR`); return true; });
   }
 });

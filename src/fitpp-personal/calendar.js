@@ -1,7 +1,7 @@
 'use strict';
 
 const {merge} = require('./group-period-model');
-const {projectId, ownerUid, main, trainer} = require('./runtime-config');
+const {projectId, ownerUid, main, trainer, bookings} = require('./runtime-config');
 const {validDate} = require('../fitpp-calendar-reader');
 const locations = new Set(['zarya', 'pole', 'online']);
 
@@ -47,6 +47,54 @@ function createPersonalCalendar({sdk, raw, validateAuth}) {
     async findById(id) {
       if (typeof id !== 'string' || !id) throw Error('CALENDAR_ID_REFUSED');
       return (await read()).find(workout => workout.id === id) || null;
+    },
+    async bookedClients(workout) {
+      if (!workout?.id) return [];
+      await validateAuth();
+      const [stateSnap, historySnap, bookingsSnap] = await Promise.all([
+        sdk.getDocFromServer(sdk.doc(raw, main)),
+        sdk.getDocFromServer(sdk.doc(raw, trainer)),
+        sdk.getDocFromServer(sdk.doc(raw, bookings))
+      ]);
+      await validateAuth();
+
+      const stateData = stateSnap.data() || {};
+      const historyData = historySnap.data() || {};
+      const bookingsData = bookingsSnap.data() || {};
+
+      const allWorkouts = workouts(stateData, historyData);
+      const activeClients = (stateData.clients || []).filter(c => !c.archivedAt);
+      const clientMap = new Map(activeClients.map(c => [String(c.id), c]));
+      const entries = bookingsData.entries || {};
+
+      const matching = allWorkouts.filter(x => x.date === workout.date && x.location === workout.location);
+      const active = matching.filter(x => !x.cancelled);
+      const legacyWorkouts = active.length ? active : matching;
+
+      const booked = [];
+      for (const [key, value] of Object.entries(entries)) {
+        if (value !== true) continue;
+        try {
+          const parts = JSON.parse(key);
+          if (!Array.isArray(parts)) continue;
+          const [id, scope, location] = parts;
+          const clientId = String(id);
+          if (!clientMap.has(clientId)) continue;
+
+          const exact = parts.length === 2 && scope === workout.id;
+          const legacy = parts.length === 3 && scope === workout.date && location === workout.location &&
+            legacyWorkouts.some(x => x.id === workout.id);
+
+          if (exact || legacy) {
+            const client = clientMap.get(clientId);
+            booked.push({
+              clientId,
+              name: client?.name || `Клиент #${clientId}`
+            });
+          }
+        } catch {}
+      }
+      return booked;
     }
   };
 }

@@ -35,7 +35,7 @@ test('missing or malformed new schedule fails closed without legacy fallback',as
  }
 });
 test('actual prepare and calendarPlan use states/main instead of conflicting group schedule',async()=>{
- const chat='-80345864298680';
+ const chat='-79450912874680';
  const regular=w();
  const additional={...w('additional'),extra:true,time:'22:00'};
  const main={
@@ -60,7 +60,7 @@ test('actual prepare and calendarPlan use states/main instead of conflicting gro
    ? {user_id:123,is_bot:true,username:'id623401053090_1_bot'}
    : url.endsWith('/members/me')
     ? {user_id:123,is_bot:true}
-    : {chat_id:chat,title:'Тест тренировок'};
+    : {chat_id:chat,title:'ТАБАТА запись'};
  }};
  let reads=0;
  const db={doc(path){

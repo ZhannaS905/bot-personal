@@ -248,8 +248,8 @@ async sendCalendar(p, message){
 }
 function pollBody(p){return body({...p,votes:new Map(p.order.map(uid=>[uid,p.votes[uid]]))})}
 class Autopost{
- constructor({store,api,booking,calendar,calendarPollStore,calendarMode=false,personalMode=false,admins=[],now=()=>new Date(),log=console.error}){
-  Object.assign(this,{store,api,booking,calendar,calendarPollStore,calendarMode,personalMode,admins,now,log});this.calendarCallbacks = calendar && calendarPollStore
+ constructor({store,api,booking,calendar,calendarPollStore,calendarMode=false,personalMode=false,admins=[],now=()=>new Date(),log=console.error,telegramBridge=null}){
+  Object.assign(this,{store,api,booking,calendar,calendarPollStore,calendarMode,personalMode,admins,now,log,telegramBridge});this.calendarCallbacks = calendar && calendarPollStore
       ? require('./training-test-calendar-callbacks').createCalendarCallbacks({
           store: calendarPollStore,
           calendar,
@@ -258,6 +258,24 @@ class Autopost{
         })
       : null;
     this.tail=Promise.resolve();this.stopped=false;this.startedAt=+now();this.lastTick=this.startedAt;this.lastBookingSync=0;this.lastCalendarMaintenance=0;this.lastCalendarCleanupDate=null;
+    if (this.telegramBridge) {
+      this.telegramBridge.start({
+        onAdminPoll: async () => {
+          await this.publishTodayCalendar();
+        },
+        onCallback: async (syntheticUpdate) => {
+          await this.receive(syntheticUpdate);
+        },
+        getActivePoll: async (payload) => {
+          const parts = (payload || '').split(':');
+          const key = parts[1];
+          if (key && this.calendarPollStore) {
+            return this.calendarPollStore.read(key);
+          }
+          return null;
+        }
+      });
+    }
  }
  run(job){const next=this.tail.then(()=>{if(!this.stopped)return job()});this.tail=next.catch(()=>{});return next}
  async publishCalendar(workout) {
@@ -291,6 +309,13 @@ class Autopost{
    try {
      const mid = await this.api.sendCalendar(poll, calendarPollBody(poll));
      await this.calendarPollStore.finish(key, poll.id, mid);
+     if (this.telegramBridge) {
+       try {
+         await this.telegramBridge.sendCalendar({...poll, key, mid}, calendarPollBody(poll));
+       } catch (err) {
+         this.log('Training Test: telegram publication failed: ' + (err?.message || err));
+       }
+     }
      this.log('Training Test: calendar poll published.');
      return true;
    } catch {
@@ -524,6 +549,17 @@ class Autopost{
           current = await this.calendarPollStore.read(key);
         }
       }
+      if (this.personalMode && typeof this.calendar?.bookedClients === 'function' && typeof this.calendarPollStore?.syncSiteAttendees === 'function') {
+        try {
+          const booked = await this.calendar.bookedClients(workout);
+          const synced = await this.calendarPollStore.syncSiteAttendees(key, booked);
+          if (synced) {
+            current = await this.calendarPollStore.read(key);
+          }
+        } catch (err) {
+          this.log('Training Test: site bookings sync error: ' + (err?.message || err));
+        }
+      }
       polls[index] = current || poll;
       if (!current || current.status !== 'published' ||
           current.revision === current.displayedRevision) continue;
@@ -545,8 +581,24 @@ class Autopost{
 
         if (claimed.cancelled) {
           await this.api.cancelCalendar(claimed, {beforePut});
+          if (this.telegramBridge) {
+            try {
+              const { calendarPollBody } = require('./training-test-calendar-body');
+              await this.telegramBridge.cancelCalendar(claimed, calendarPollBody(claimed));
+            } catch (err) {
+              this.log('Training Test: telegram cancel failed: ' + (err?.message || err));
+            }
+          }
         } else {
           await this.api.editCalendar(claimed, {beforePut});
+          if (this.telegramBridge) {
+            try {
+              const { calendarPollBody } = require('./training-test-calendar-body');
+              await this.telegramBridge.editCalendar(claimed, calendarPollBody(claimed));
+            } catch (err) {
+              this.log('Training Test: telegram edit failed: ' + (err?.message || err));
+            }
+          }
         }
 
         await this.calendarPollStore.finishEdit(
@@ -625,6 +677,14 @@ class Autopost{
                await this.api.editCalendar(claimed, {
                  beforePut: () => this.calendarPollStore.checkEdit(key, token)
                });
+               if (this.telegramBridge) {
+                 try {
+                   const { calendarPollBody } = require('./training-test-calendar-body');
+                   await this.telegramBridge.editCalendar(claimed, calendarPollBody(claimed));
+                 } catch (err) {
+                   this.log('Training Test: telegram edit failed: ' + (err?.message || err));
+                 }
+               }
                await this.calendarPollStore.finishEdit(
                  key, token, claimed.revision
                );
@@ -739,7 +799,7 @@ class Autopost{
    return true;
   })
  }
- close(){if(!this.closeFlight)this.closeFlight=(async()=>{await this.tail;this.stopped=true;await this.store.close()})();return this.closeFlight}
+ close(){if(!this.closeFlight)this.closeFlight=(async()=>{await this.tail;this.stopped=true;if(this.telegramBridge)await this.telegramBridge.stop();await this.store.close()})();return this.closeFlight}
 }
 async function prepare({env=process.env,storeFactory,calendarPollStoreFactory,calendarStore,calendarDb,personalCalendar,now,raw,booking}={}){
  const c=await at('AUTOPOST_SETTINGS',()=>settings(env));if(!c)return null;
@@ -775,10 +835,22 @@ const calendarMode=env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true';
     : calendarDb
       ? require('./fitpp-calendar-reader').createCalendar({db:calendarDb})
       : null;
+ let telegramBridge = null;
+ if (env.TELEGRAM_BOT_TOKEN) {
+   const { TelegramBridge } = require('./telegram-bridge');
+   telegramBridge = new TelegramBridge({
+     token: env.TELEGRAM_BOT_TOKEN,
+     chatId: env.TELEGRAM_CHAT_ID,
+     adminIds: env.TELEGRAM_ADMIN_IDS ? env.TELEGRAM_ADMIN_IDS.split(',').map(s => s.trim()).filter(Boolean) : c.admins,
+     stateDir: env.STATE_DIR || (process.platform === 'linux' ? '/data' : 'data'),
+     log: console.log,
+     onError: console.error
+   });
+ }
  return new Autopost({
     store,api,booking,calendar,calendarPollStore,
     calendarMode,personalMode,
-    admins:c.admins,now
+    admins:c.admins,now,telegramBridge
   });
 }
 function attach(service,{schedule=setInterval,cancel=clearInterval}={}){

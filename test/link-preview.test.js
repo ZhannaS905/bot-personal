@@ -9,7 +9,7 @@ test('Training Test sends online preview suppression in query, keeps HTML/button
     calls.push({ url, method: options.method, body: options.body && JSON.parse(options.body) });
     const data = url.pathname === '/me' ? { user_id: 123, username: 'id623401053090_1_bot', is_bot: true }
       : url.pathname.endsWith('/members/me') ? { user_id: 123, is_bot: true }
-      : url.pathname.startsWith('/chats/') ? { chat_id: Number(CHAT), title: 'Тест тренировок' }
+      : url.pathname.startsWith('/chats/') ? { chat_id: Number(CHAT), title: 'ТАБАТА запись' }
       : { message: { body: { mid: 'owned' } } };
     return { ok: true, json: async () => data };
   });

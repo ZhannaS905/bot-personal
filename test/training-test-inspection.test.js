@@ -13,7 +13,7 @@ function fixture({patchMessage=m=>m,patchMe=m=>m,full=false,missing=false,ledger
   if(id.endsWith('pilot-policy.cjs'))return {POLL};
   if(id.endsWith('memory-training-test.js'))return {config:()=>({token:'PRIVATE_TOKEN',expectedId:'123'})};
   if(id.endsWith('test-bot-identity.js'))return identity;
-  if(id.endsWith('api.js'))return {MaxApi:class{async request(method,endpoint){calls.push([method,endpoint]);assert.equal(method,'GET');if(endpoint==='/me')return me;if(endpoint.endsWith('/members/me'))return {user_id:123,is_bot:true};if(endpoint.startsWith('/chats/'))return {chat_id:POLL.chat,title:'Тест тренировок'};if(endpoint==='/messages')return {messages:full?Array(100).fill(message):[message]};if(missing)throw Error('MAX HTTP 404');return message}}};
+  if(id.endsWith('api.js'))return {MaxApi:class{async request(method,endpoint){calls.push([method,endpoint]);assert.equal(method,'GET');if(endpoint==='/me')return me;if(endpoint.endsWith('/members/me'))return {user_id:123,is_bot:true};if(endpoint.startsWith('/chats/'))return {chat_id:POLL.chat,title:'ТАБАТА запись'};if(endpoint==='/messages')return {messages:full?Array(100).fill(message):[message]};if(missing)throw Error('MAX HTTP 404');return message}}};
   throw Error('Unexpected import '+id);
  };
  vm.runInNewContext(source,context);return {calls,logs,inspect:()=>context.module.exports.inspect({root:'/offline',env:ledger?{TRAINING_TEST_AUTOPOST_STATE_DIR:'/offline/ledger'}:{},log:x=>logs.push(x)})};

@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{createHash}=require('node:crypto');
 const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
-const USER='5819064',POLL={chat:'-80345864298680',mid:'mid.mock',uuid:'test-uuid',date:'2026-10-26',location:'zarya',workoutId:'zarya_2026-10-26',closesAt:200000},scope={...POLL,openedAt:1};
+const USER='5819064',POLL={chat:'-79450912874680',mid:'mid.mock',uuid:'test-uuid',date:'2026-10-26',location:'zarya',workoutId:'zarya_2026-10-26',closesAt:200000},scope={...POLL,openedAt:1};
 const key=(...x)=>JSON.stringify(x),prefix='fitppTestWorkspaces/synthetic-v1/';
 function fixture(){const docs=new Map(),reads=[];let cancelled=false;
  docs.set(prefix+'maxBindings/'+hash(USER),{active:true,clientId:'demo-client-1'});docs.set(prefix+'maxPolls/'+hash([POLL.chat,POLL.mid]),{...POLL,openedAt:1,open:true});docs.set(prefix+'maxClientBindings/'+hash('demo-client-1'),{userHash:hash(USER)});docs.set(prefix+'bookingVersions/'+hash(key('demo-client-1',POLL.date,POLL.location)),{eventAt:90000,booked:false});

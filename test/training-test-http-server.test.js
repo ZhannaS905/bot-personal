@@ -19,7 +19,7 @@ test('calendar webhook: health, security and callback routing', async () => {
     secret: 'local-test-secret-123456',
     env: {
       BOT_MODE: 'test',
-      CHAT_IDS: '-80345864298680',
+      CHAT_IDS: '-79450912874680',
       TEST_BOT_TOKEN: 'local-test-token',
       TEST_EXPECTED_BOT_ID: '123456',
       WEBHOOK_SECRET: 'local-test-secret-123456'
@@ -75,7 +75,7 @@ test('server refuses startup when MAX identity verification fails', async () => 
       host: '127.0.0.1',
       env: {
         BOT_MODE: 'test',
-        CHAT_IDS: '-80345864298680',
+        CHAT_IDS: '-79450912874680',
         TEST_BOT_TOKEN: 'local-test-token',
         TEST_EXPECTED_BOT_ID: '123456',
         WEBHOOK_SECRET: 'local-test-secret-123456'
@@ -119,7 +119,7 @@ test('calendar server closes listener if autopost attachment fails', async () =>
       secret: 'local-test-secret-123456',
       env: {
         BOT_MODE: 'test',
-        CHAT_IDS: '-80345864298680',
+        CHAT_IDS: '-79450912874680',
         TEST_BOT_TOKEN: 'local-test-token',
         TEST_EXPECTED_BOT_ID: '123456',
         WEBHOOK_SECRET: 'local-test-secret-123456'

@@ -4,11 +4,11 @@ const diagnostic=require('../src/fitpp-direct-diagnostic');
 const autopost=require('../src/training-test-autopost');
 const source=fs.readFileSync(require.resolve('../direct-training-test.cjs'),'utf8');
 const secret='PRIVATE_TOKEN password=PRIVATE_PASSWORD document={name:PRIVATE_PERSON} https://private.invalid/path\nFORGED_LOG';
-const env={BOT_MODE:'test',CHAT_IDS:'-80345864298680',TEST_BOT_TOKEN:'PRIVATE_TOKEN',TEST_EXPECTED_BOT_ID:'123',WEBHOOK_SECRET:'private_secret_123',FIREBASE_PROJECT_ID:'fitpp-test',AUTO_PUBLISH:'false',TEST_ALLOW_SEND:'false',TEST_ALLOW_EDIT:'false',TEST_ALLOW_DELETE:'false',TRAINING_TEST_AUTOPOST_ENABLED:'true'};
+const env={BOT_MODE:'test',CHAT_IDS:'-79450912874680',TEST_BOT_TOKEN:'PRIVATE_TOKEN',TEST_EXPECTED_BOT_ID:'123',WEBHOOK_SECRET:'private_secret_123',FIREBASE_PROJECT_ID:'fitpp-test',AUTO_PUBLISH:'false',TEST_ALLOW_SEND:'false',TEST_ALLOW_EDIT:'false',TEST_ALLOW_DELETE:'false',TRAINING_TEST_AUTOPOST_ENABLED:'true'};
 function failure(code){return Object.assign(Error(secret),{code,stack:secret,cause:{message:secret,code:secret},stage:secret,reason:secret,document:{name:'PRIVATE_PERSON'}})}
 function fixture({stage='AUTOPOST_FIRST_READ',code='permission-denied',cleanupFails=false,cli=false,disabled=false}={}){
  const calls=[],logs=[],module={exports:{}},runtimeEnv={...env,...(disabled?{TRAINING_TEST_AUTOPOST_ENABLED:'false'}:{})};
- const raw={async request(method,endpoint){assert.equal(method,'GET');calls.push('GET');if(stage==='AUTOPOST_MAX_IDENTITY')throw failure(code);return endpoint==='/me'?{user_id:123,username:'id623401053090_1_bot',is_bot:true}:endpoint.endsWith('/members/me')?{user_id:123,is_bot:true}:{chat_id:env.CHAT_IDS,title:'Тест тренировок'}}};
+ const raw={async request(method,endpoint){assert.equal(method,'GET');calls.push('GET');if(stage==='AUTOPOST_MAX_IDENTITY')throw failure(code);return endpoint==='/me'?{user_id:123,username:'id623401053090_1_bot',is_bot:true}:endpoint.endsWith('/members/me')?{user_id:123,is_bot:true}:{chat_id:env.CHAT_IDS,title:'ТАБАТА запись'}}};
  const prepared={autopostStore(){calls.push('factory');if(stage==='AUTOPOST_STORE_FACTORY')throw failure(code);return {async read(){calls.push('read');if(stage==='AUTOPOST_FIRST_READ')throw failure(code);return null},close(){calls.push('store-close')}}},async close(){calls.push('session-close');if(cleanupFails)throw failure('unavailable')}};
  const fakeRequire=id=>{
   if(id==='./src/fitpp-direct-diagnostic')return diagnostic;

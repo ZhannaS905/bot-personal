@@ -28,7 +28,7 @@ async function fixture() {
       calls.push('edit');await beforePut();}}
   });
   const event=(action,id)=>({update_type:'message_callback',timestamp:++clock,
-    message:{recipient:{chat_id:CHAT,chat_type:'chat'},body:{mid:'mid.local'}},
+    message:{recipient:{chat_id:CHAT,chat_type:'channel'},body:{mid:'mid.local'}},
     callback:{callback_id:id,payload:`cal:${key}:${uuid}:${action}`,
       user:{user_id:80,is_bot:false,first_name:'Local'}}});
   return {db,store,service,calls,logs,event,key,path:

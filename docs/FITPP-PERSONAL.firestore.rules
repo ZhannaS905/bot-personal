@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function owner(){return request.auth != null && request.auth.uid == "qWX93IRLn2Ww22KoevmtoI3ffXF2";}
+  function bot() {
+   return request.auth != null && request.auth.uid == 'ZcJOda4LFpWsfKm1EHeDTb5yyD83';
+  }
+  function meta(){return request.resource.data.ownerUid == "qWX93IRLn2Ww22KoevmtoI3ffXF2" && request.resource.data.datasetId == 'personal-v1' && request.resource.data.schemaVersion == 1;}
+  match /fitppWorkspaces/personal-v1/states/main {
+   allow get: if owner() || bot();
+   allow create: if owner() && meta() && request.resource.data.clients is list && request.resource.data.clients.size() == 0 && request.resource.data._fitppRevision == 0 && request.resource.data.mutationReceipts.size() == 0;
+   allow update: if owner() && meta() && request.resource.data.clients is list && request.resource.data.clients.size() <= 500
+    && request.resource.data._fitppRevision == resource.data._fitppRevision + 1
+    && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['mutationReceipts'])
+    && committedOperation(request.resource.data);
+   allow update: if bot() && botMainUpdate();
+  }
+  function mainPath(){return /databases/$(database)/documents/fitppWorkspaces/personal-v1/states/main;}
+  function bookingsPath() {
+   return /databases/$(database)/documents/fitppWorkspaces/personal-v1/states/bookings;
+  }
+  function nextRevision(before, after) {
+   return after is int && after == (before == null ? 0 : before) + 1;
+  }
+  function botMainUpdate() {
+   let after = request.resource.data;
+   return after.diff(resource.data).affectedKeys().hasOnly(['_fitppRevision', 'lastOperation'])
+    && nextRevision(resource.data.get('_fitppRevision', 0), after._fitppRevision)
+    && after.lastOperation.collection == 'operations'
+    && committedOperation(after)
+    && nextRevision(get(bookingsPath()).data.get('revision', 0), getAfter(bookingsPath()).data.revision);
+  }
+  function botBookingsUpdate() {
+   let before = resource.data;
+   let after = request.resource.data;
+   let entries = after.entries.diff(before.entries).affectedKeys();
+   let oldVersions = before.get('versions', {});
+   let versions = after.versions.diff(oldVersions == null ? {} : oldVersions).affectedKeys();
+   return after.diff(before).affectedKeys().hasOnly(['entries', 'versions', 'revision'])
+    && entries.size() == 1 && entries == versions
+    && nextRevision(before.get('revision', 0), after.revision)
+    && nextRevision(get(mainPath()).data.get('_fitppRevision', 0), getAfter(mainPath()).data._fitppRevision);
+  }
+  function operationPath(collection,id){return /databases/$(database)/documents/fitppWorkspaces/personal-v1/$(collection)/$(id);}
+  function committedOperation(main){
+   let op=main.lastOperation;
+   let receipt=operationPath(op.collection,op.id);
+   return op.keys().hasOnly(['collection','id']) && op.collection in ['operations','paymentReceipts']
+    && op.id is string && op.id.matches('[a-zA-Z0-9-]{1,100}')
+    && !exists(receipt) && getAfter(receipt).data.revision == main._fitppRevision;
+  }
+  function pairedCreate(collection,id){
+   let before=get(mainPath()).data;
+   let after=getAfter(mainPath()).data;
+   let receipt=request.resource.data;
+   let other=collection=='operations'?'paymentReceipts':'operations';
+   return (bot()
+     ? nextRevision(before.get('_fitppRevision', 0), after._fitppRevision)
+     : after._fitppRevision == before._fitppRevision + 1)
+    && receipt.revision == after._fitppRevision
+    && after.lastOperation == {'collection':collection,'id':id}
+    && !(id in before.get('mutationReceipts',{})) && !exists(operationPath(other,id))
+    && receipt.signature is string && receipt.type is string && receipt.at is int;
+  }
+  match /fitppWorkspaces/personal-v1/operations/{id} {
+   allow get: if owner();
+   allow create: if (owner() || (bot() && request.resource.data.type == 'booking'))
+    && request.resource.data.keys().hasOnly(['signature','type','at','revision']) && pairedCreate('operations',id);
+  }
+  match /fitppWorkspaces/personal-v1/paymentReceipts/{id} {
+   allow get: if owner();
+   allow create: if owner() && request.resource.data.keys().hasOnly(['signature','type','at','revision','clientId','entries'])
+    && (request.resource.data.clientId is string || request.resource.data.clientId is int)
+    && request.resource.data.entries is list && request.resource.data.entries.size()>0 && pairedCreate('paymentReceipts',id);
+  }
+  match /fitppWorkspaces/personal-v1/states/bookings {
+   allow get: if owner() || bot();
+   allow create: if owner() && meta() && request.resource.data.entries.size() == 0;
+   allow update: if owner() && meta() && request.resource.data.entries is map && request.resource.data.entries.size() <= 500 && request.resource.data.revision == resource.data.revision + 1;
+   allow update: if bot() && botBookingsUpdate();
+  }
+  match /trainers/{uid} {
+   allow get: if (owner() || bot()) && uid == "qWX93IRLn2Ww22KoevmtoI3ffXF2";
+   allow create: if owner() && uid == "qWX93IRLn2Ww22KoevmtoI3ffXF2" && request.resource.data.ownerUid == "qWX93IRLn2Ww22KoevmtoI3ffXF2";
+   allow update: if owner() && uid == "qWX93IRLn2Ww22KoevmtoI3ffXF2" && request.resource.data.ownerUid == "qWX93IRLn2Ww22KoevmtoI3ffXF2" && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['groupScheduleV1','manualExpensesV1']);
+  }
+  match /fitppWorkspaces/personal-v1/notificationBindings/training-test {allow get: if owner();}
+ }
+}

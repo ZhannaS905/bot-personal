@@ -25,8 +25,9 @@ function body(poll) {
   ] } }] };
 }
 class Service {
-  constructor(store, api, config, now = () => new Date()) {
+  constructor(store, api, config, now = () => new Date(), telegramBridge = null) {
     this.store = store; this.api = api; this.config = config; this.now = now; this.queue = Promise.resolve();
+    this.telegramBridge = telegramBridge;
   }
   run(job) { const next = this.queue.then(job); this.queue = next.catch(() => {}); return next; }
   async publish(chat) {
@@ -40,6 +41,13 @@ class Service {
     try {
       poll.mid = await this.api.send(chat, body(poll));
       poll.status = 'published';
+      if (this.telegramBridge) {
+        try {
+          await this.telegramBridge.sendCalendar(poll, body(poll));
+        } catch (err) {
+          console.error('[Telegram] Failed to send poll:', err?.message || err);
+        }
+      }
     } catch { poll.status = 'uncertain'; }
     this.store.save();
   }
@@ -108,7 +116,18 @@ class Service {
   async refresh() {
     for (const poll of Object.values(this.store.state.polls)) {
       if (!poll.dirty || poll.status !== 'published') continue;
-      try { await this.api.edit(poll.mid, body(poll)); poll.dirty = false; this.store.save(); }
+      try {
+        await this.api.edit(poll.mid, body(poll));
+        if (this.telegramBridge) {
+          try {
+            await this.telegramBridge.editCalendar(poll, body(poll));
+          } catch (tgErr) {
+            console.error('[Telegram] Failed to edit poll:', tgErr?.message || tgErr);
+          }
+        }
+        poll.dirty = false;
+        this.store.save();
+      }
       catch { /* Retain durable dirty flag; retry edit only, never create a replacement. */ }
     }
   }

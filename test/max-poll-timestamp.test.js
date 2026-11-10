@@ -13,7 +13,7 @@ function fixture(mutate = () => {}) {
   const fetch = async (url, options) => {
     calls.push([options.method,url.pathname]);
     assert.equal(options.method,'GET');
-    const data = url.pathname === '/me' ? {user_id:123,is_bot:true,username:'id623401053090_1_bot'} : url.pathname.endsWith('/members/me') ? {user_id:123,is_bot:true} : url.pathname.startsWith('/chats/') ? {chat_id:POLL.chat,title:'Тест тренировок'} : message;
+    const data = url.pathname === '/me' ? {user_id:123,is_bot:true,username:'id623401053090_1_bot'} : url.pathname.endsWith('/members/me') ? {user_id:123,is_bot:true} : url.pathname.startsWith('/chats/') ? {chat_id:POLL.chat,title:'ТАБАТА запись'} : message;
     return {ok:true,json:async()=>data};
   };
   return {calls,output,fetch};

@@ -11,8 +11,8 @@ function fixture(t,date='2026-11-02T06:59:59Z',db=database()){
  function restart(){s=new Autopost({store:db.store({now:()=>+now}),api,admins:['1'],now:()=>now,log:x=>logs.push(x)});return s}
  restart();t.after(()=>s.close());return {db,calls,api,logs,get s(){return s},time:x=>{now=new Date(x)},restart};
 }
-function callback(p,id='a',action='yes',at=Date.parse('2026-11-02T07:01:00Z')){return {update_type:'message_callback',timestamp:at,callback:{callback_id:id,timestamp:at,payload:`poll:${p.id}:${action}`,user:{user_id:1,is_bot:false,first_name:'Елена <&>'}},message:{recipient:{chat_id:CHAT,chat_type:'chat'},body:{mid:p.mid}}}}
-function command(at=Date.parse('2026-11-02T08:00:00Z')){return {update_type:'message_created',timestamp:at,message:{timestamp:at,sender:{user_id:1,is_bot:false},recipient:{chat_id:CHAT,chat_type:'chat'},body:{mid:'mid.command',text:'/тестопрос-сегодня'}}}}
+function callback(p,id='a',action='yes',at=Date.parse('2026-11-02T07:01:00Z')){return {update_type:'message_callback',timestamp:at,callback:{callback_id:id,timestamp:at,payload:`poll:${p.id}:${action}`,user:{user_id:1,is_bot:false,first_name:'Елена <&>'}},message:{recipient:{chat_id:CHAT,chat_type:'channel'},body:{mid:p.mid}}}}
+function command(at=Date.parse('2026-11-02T08:00:00Z')){return {update_type:'message_created',timestamp:at,message:{timestamp:at,sender:{user_id:1,is_bot:false},recipient:{chat_id:CHAT,chat_type:'channel'},body:{mid:'mid.command',text:'/тестопрос-сегодня'}}}}
 test('Firestore test scope requires no persistent disk and never widens general flags',()=>{
  assert.equal(settings({}),null);assert.equal(settings({...env,TRAINING_TEST_AUTOPOST_ENABLED:'false'}),null);assert(settings(env));
  assert(settings({...env,TRAINING_TEST_AUTOPOST_STATE_DIR:'ignored-legacy-path',TRAINING_TEST_AUTOPOST_DURABLE_VOLUME:'false'}));
@@ -81,7 +81,7 @@ test('300000ms scheduler avoids backlog; FitPP/contact traffic bypasses publicat
 });
 function rawFixture(){
  const requests=[],p={id:'a'.repeat(8)+'-aaaa-aaaa-aaaa-'+ 'a'.repeat(12),date:'2026-11-02',votes:{},order:[],mid:'mid.test',status:'published'};
- let me={user_id:123,username:'id623401053090_1_bot',is_bot:true},chat={chat_id:CHAT,title:'Тест тренировок'},member={user_id:123,is_bot:true};
+ let me={user_id:123,username:'id623401053090_1_bot',is_bot:true},chat={chat_id:CHAT,title:'ТАБАТА запись'},member={user_id:123,is_bot:true};
  let message={sender:me,recipient:{chat_id:CHAT},body:{mid:p.mid,attachments:body({...p,votes:new Map()}).attachments}};
  return {requests,p,setMe:v=>me=v,setChat:v=>chat=v,setMember:v=>member=v,setMessage:v=>message=v,raw:{async request(method,url,params){requests.push([method,url,params]);return url==='/me'?me:url.endsWith('/members/me')?member:url.startsWith('/chats/')?chat:message},async send(chat,b,opts){requests.push(['POST',chat,b,opts]);return 'mid.test'},async edit(mid,b){requests.push(['PUT',mid,b])}}};
 }
@@ -90,8 +90,9 @@ test('capability rechecks identity before every send, pins chat and verifies edi
  await api.send(r.p);await api.edit(r.p);assert.equal(r.requests.find(x=>x[0]==='POST')[1],CHAT);assert.deepEqual(r.requests.find(x=>x[0]==='PUT')[2],{text:body({...r.p,votes:new Map()}).text,format:'html',notify:false});assert(!('remove'in api));
  r.setMe({user_id:123,username:'production_bot',is_bot:true});await assert.rejects(api.send(r.p),/IDENTITY/);assert.equal(r.requests.filter(x=>x[0]==='POST').length,1);
 });
+
 test('wrong bot, chat, membership, edit sender/recipient/keyboards cannot write',async()=>{
- for(const patch of [r=>r.setMe({user_id:124,username:'id623401053090_1_bot',is_bot:true}),r=>r.setMe({user_id:123,username:'id623401053090_1_bot',is_bot:false}),r=>r.setChat({chat_id:'-1',title:'Тест тренировок'}),r=>r.setChat({chat_id:CHAT,title:'Рабочая группа'}),r=>r.setMember({user_id:124,is_bot:true})]){const r=rawFixture();patch(r);await assert.rejects(capability({expectedId:'123'},{raw:r.raw}));assert(!r.requests.some(x=>['POST','PUT','DELETE'].includes(x[0])))}
+ for(const patch of [r=>r.setMe({user_id:124,username:'id623401053090_1_bot',is_bot:true}),r=>r.setMe({user_id:123,username:'id623401053090_1_bot',is_bot:false}),r=>r.setChat({chat_id:'-1',title:'ТАБАТА запись'}),r=>r.setChat({chat_id:CHAT,title:'Рабочая группа'}),r=>r.setMember({user_id:124,is_bot:true})]){const r=rawFixture();patch(r);await assert.rejects(capability({expectedId:'123'},{raw:r.raw}));assert(!r.requests.some(x=>['POST','PUT','DELETE'].includes(x[0])))}
  for(const m of [{},{sender:{user_id:123,is_bot:true},recipient:{chat_id:'-1'},body:{mid:'mid.test'}},{sender:{user_id:124,is_bot:true},recipient:{chat_id:CHAT},body:{mid:'mid.test',attachments:[]}}]){const r=rawFixture(),a=await capability({expectedId:'123'},{raw:r.raw});r.setMessage(m);await assert.rejects(a.edit(r.p),/SCOPE/);assert(!r.requests.some(x=>x[0]==='PUT'))}
 });
 
@@ -115,7 +116,7 @@ test('deleteAdminCommand validates command scope before deleting',async()=>{
  const api=await capability({token:'offline',expectedId:'123'},{raw:r.raw});
  const m={
   sender:{user_id:5819064,is_bot:false},
-  recipient:{chat_id:CHAT,chat_type:'chat'},
+  recipient:{chat_id:CHAT,chat_type:'channel'},
   body:{mid:'mid.command',text:'/опрос'}
  };
  r.setMessage(m);

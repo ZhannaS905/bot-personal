@@ -267,6 +267,66 @@ function createCalendarPollStore({sdk,raw,botId,validateAuth,writeEnabled=()=>fa
       return true;
     });
   },
+
+  async syncSiteAttendees(key, bookedClients, render = require('./training-test-calendar-body').calendarPollBody) {
+    if (!Array.isArray(bookedClients)) return false;
+    return tx(key, async ({transaction, p, set}) => {
+      if (!p || p.status !== 'published' || p.cancelled === true) return false;
+
+      const snap = await transaction.get(sdk.doc(raw, bindingsPath));
+      const registry = snap.exists() ? snap.data() : {version: 1, botId: Number(botId), bindings: []};
+
+      const clientIdToUid = (clientId) => {
+        const binding = registry.bindings?.find(b => b.clientId === clientId);
+        if (binding?.maxUserId && /^[1-9]\d*$/.test(String(binding.maxUserId))) {
+          return String(binding.maxUserId);
+        }
+        let hash = 0;
+        for (let i = 0; i < clientId.length; i++) {
+          hash = ((hash << 5) - hash + clientId.charCodeAt(i)) | 0;
+        }
+        return String(9000000000 + Math.abs(hash % 999999999));
+      };
+
+      const next = structuredClone(p);
+      let changed = false;
+      next.siteBookings ||= {};
+
+      const currentSiteUids = new Set();
+      for (const {clientId, name} of bookedClients) {
+        const uid = clientIdToUid(clientId);
+        currentSiteUids.add(uid);
+
+        if (!Object.hasOwn(next.votes, uid)) {
+          const cleanName = String(name || `Клиент #${clientId}`).slice(0, 100);
+          next.order.push(uid);
+          next.votes[uid] = cleanName;
+          next.last[uid] = Date.now();
+          next.siteBookings[uid] = clientId;
+          changed = true;
+        }
+      }
+
+      for (const [uid, clientId] of Object.entries(next.siteBookings)) {
+        if (!currentSiteUids.has(uid)) {
+          if (Object.hasOwn(next.votes, uid)) {
+            delete next.votes[uid];
+            next.order = next.order.filter(id => id !== uid);
+            changed = true;
+          }
+          delete next.siteBookings[uid];
+        }
+      }
+
+      if (changed) {
+        if (Array.from(render(next).text).length > 4000) return false;
+        next.revision++;
+        set(next);
+        return true;
+      }
+      return false;
+    });
+  },
   async claimEdit(key){const token=randomUUID();return tx(key,({p,set})=>{
    if(p?.status!=='published'||p.revision===p.displayedRevision||p.editLease?.until>now())return null;
    const next={...p,editLease:{token,until:now()+120000}};set(next);return next;

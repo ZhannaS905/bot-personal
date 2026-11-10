@@ -28,18 +28,17 @@ test('Firestore document representation uses no nested arrays and rejects corrup
  const db=database(),s=db.store();await s.reserve(date,base);const key=ROOT+'/123/polls/'+date,p=db.data.get(key);assert.deepEqual(p.votes,{});assert.deepEqual(p.last,{});assert.deepEqual(p.order,[]);
  db.data.set(key,{...p,chat:'-1'});await assert.rejects(s.read(date),/DOCUMENT_REFUSED/);await assert.rejects(s.reserve(date,base),/DOCUMENT_REFUSED/);
 });
-test('explicit legacy import preserves mid, UUID, votes, last events, receipts and uncertain blocks',async()=>{
- const db=database(),s=db.store(),legacy={id:uuid,date,status:'published',mid:'mid.test',votes:[[1,'Анна'],[2,'Елена']],last:[[1,100],[2,101]],done:['old-callback'],dirty:true};
- const input={version:1,autopost:{chat:POLL.chat},polls:{[date]:legacy}};assert.equal(legacyPolls(input,'123').length,1);
- assert.equal(await s.importLegacy(date,legacy),true);assert.equal(await s.importLegacy(date,legacy),false);const p=await s.read(date);assert.equal(p.id,uuid);assert.equal(p.mid,'mid.test');assert.equal(p.revision,1);assert.deepEqual(p.votes,{'1':'Анна','2':'Елена'});assert.deepEqual(p.last,{'1':100,'2':101});
- assert.equal(await s.vote(date,{id:'old-callback',uuid,mid:'mid.test',uid:'1',at:200,action:'cancel',name:'Анна'},pollBody),false);
- await assert.rejects(s.importLegacy(date,{...legacy,mid:'mid.foreign'}),/CONFLICT/);
- const next='2026-11-03';await s.importLegacy(next,{...legacy,date:next,status:'uncertain',mid:null});assert.equal(await s.reserve(next,base),false);
- const foreign=structuredClone(input);foreign.autopost.chat='-1';assert.throws(()=>legacyPolls(foreign,'123'));
+test('legacy import from old pilot chat is refused without writes',async()=>{
+ const db=database();
+ const legacy={id:uuid,date,status:'published',mid:'mid.test',votes:[[1,'Анна']],last:[[1,100]],done:['old-callback'],dirty:true};
+ const input={version:1,autopost:{chat:POLL.chat},polls:{[date]:legacy}};
+ assert.throws(()=>legacyPolls(input,'123'),/AUTOPOST_DOCUMENT_REFUSED/);
+ assert.equal(db.commits.length,0);
 });
+
 test('prepare uses verified existing session factory, server read only, without mkdir/init/network writes',async()=>{
- const db=database(),env={BOT_MODE:'test',CHAT_IDS:POLL.chat,TEST_BOT_TOKEN:'offline',TEST_EXPECTED_BOT_ID:'123',WEBHOOK_SECRET:'offline_secret_123',AUTO_PUBLISH:'false',TEST_ALLOW_SEND:'false',TEST_ALLOW_EDIT:'false',TEST_ALLOW_DELETE:'false',TRAINING_TEST_AUTOPOST_ENABLED:'true',FIREBASE_PROJECT_ID:'fitpp-test'};
- const calls=[],raw={async request(method,p){assert.equal(method,'GET');return p==='/me'?{user_id:123,username:'id623401053090_1_bot',is_bot:true}:p.endsWith('/members/me')?{user_id:123,is_bot:true}:{chat_id:POLL.chat,title:'Тест тренировок'}}};
+ const db=database(),env={BOT_MODE:'test',CHAT_IDS:'-79450912874680',TEST_BOT_TOKEN:'offline',TEST_EXPECTED_BOT_ID:'123',WEBHOOK_SECRET:'offline_secret_123',AUTO_PUBLISH:'false',TEST_ALLOW_SEND:'false',TEST_ALLOW_EDIT:'false',TEST_ALLOW_DELETE:'false',TRAINING_TEST_AUTOPOST_ENABLED:'true',FIREBASE_PROJECT_ID:'fitpp-test'};
+ const calls=[],raw={async request(method,p){assert.equal(method,'GET');return p==='/me'?{user_id:123,username:'id623401053090_1_bot',is_bot:true}:p.endsWith('/members/me')?{user_id:123,is_bot:true}:{chat_id:'-79450912874680',title:'ТАБАТА запись'}}};
  const s=await prepare({env,now:()=>new Date(date),raw,storeFactory:(id,options)=>{calls.push(id);assert(options.writeEnabled());return db.store(options)}});assert.deepEqual(calls,['123']);assert.equal(db.commits.length,0);assert.equal(db.paths.length,1);await s.close();
  db.setFail('read');await assert.rejects(prepare({env,raw,storeFactory:()=>db.store()}),error=>require('../src/fitpp-direct-diagnostic').format(error)==='stage=AUTOPOST_FIRST_READ reason=UNKNOWN');
  assert.equal(await prepare({env:{}}),null);await assert.rejects(prepare({env}),/FIRESTORE_REQUIRED/);

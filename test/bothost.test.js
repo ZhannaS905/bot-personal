@@ -39,7 +39,7 @@ function fakeMax(mode = 'ok') {
     const me = { user_id: mode === 'wrong_id' ? 124 : 123, username: mode === 'wrong_name' ? 'another_bot' : 'id623401053090_1_bot', is_bot: mode !== 'not_bot' };
     const data = url.pathname === '/me' ? me : url.pathname.endsWith('/members/me') ?
       { user_id: mode === 'wrong_member' ? 124 : 123, is_bot: true } :
-      { chat_id: mode === 'wrong_chat' ? -1 : Number(CHAT), title: 'Тест тренировок' };
+      { chat_id: mode === 'wrong_chat' ? -1 : Number(CHAT), title: 'ТАБАТА запись' };
     return { ok: true, json: async () => data };
   };
   return { fetchImpl, calls };
