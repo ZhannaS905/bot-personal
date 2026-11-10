@@ -52,7 +52,7 @@ async function main(env = process.env) {
     telegramApi = new TelegramApi(env.TELEGRAM_BOT_TOKEN);
   }
   const { getTelegramBindings } = require('../telegram-bindings');
-  const telegramBindings = getTelegramBindings(config.directory || env.STATE_DIR || 'data');
+  const telegramBindings = getTelegramBindings(env.STATE_DIR || (process.platform === 'linux' ? '/data' : 'data'));
   const tick = createWorker({
     ...config,
     source,

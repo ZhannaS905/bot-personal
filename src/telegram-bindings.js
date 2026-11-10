@@ -8,15 +8,20 @@ class TelegramBindings {
     this.filePath = path.resolve(filePath);
     this.byUser = new Map(); // tgUserId -> { clientId, phone, name, chatId, linkedAt }
     this.byClient = new Map(); // clientId -> tgUserId
+    this.lastMtime = 0;
     this.load();
   }
 
   load() {
     try {
       if (fs.existsSync(this.filePath)) {
+        const stat = fs.statSync(this.filePath);
+        this.lastMtime = stat.mtimeMs;
         const raw = fs.readFileSync(this.filePath, 'utf8');
         const data = JSON.parse(raw);
         if (data && typeof data === 'object') {
+          this.byUser.clear();
+          this.byClient.clear();
           for (const [userId, record] of Object.entries(data)) {
             if (record && record.clientId) {
               this.byUser.set(String(userId), record);
@@ -30,6 +35,17 @@ class TelegramBindings {
     }
   }
 
+  checkReload() {
+    try {
+      if (fs.existsSync(this.filePath)) {
+        const stat = fs.statSync(this.filePath);
+        if (stat.mtimeMs !== this.lastMtime) {
+          this.load();
+        }
+      }
+    } catch {}
+  }
+
   save() {
     try {
       const dir = path.dirname(this.filePath);
@@ -38,6 +54,10 @@ class TelegramBindings {
       const tmp = this.filePath + '.tmp';
       fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), 'utf8');
       fs.renameSync(tmp, this.filePath);
+      try {
+        const stat = fs.statSync(this.filePath);
+        this.lastMtime = stat.mtimeMs;
+      } catch {}
     } catch (err) {
       console.error('Failed to save telegram bindings:', err?.message || err);
     }
@@ -75,20 +95,24 @@ class TelegramBindings {
 
   getClientId(userId) {
     if (!userId) return null;
+    this.checkReload();
     return this.byUser.get(String(userId))?.clientId || null;
   }
 
   getRecord(userId) {
     if (!userId) return null;
+    this.checkReload();
     return this.byUser.get(String(userId)) || null;
   }
 
   getTgUserId(clientId) {
     if (!clientId) return null;
+    this.checkReload();
     return this.byClient.get(String(clientId)) || null;
   }
 
   allBindings() {
+    this.checkReload();
     return Array.from(this.byUser.entries()).map(([userId, rec]) => ({
       userId,
       ...rec
