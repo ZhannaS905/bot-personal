@@ -156,6 +156,47 @@ class TelegramBridge {
     return this.editCalendar(poll, message);
   }
 
+  async deleteCalendar(poll) {
+    if (!this.enabled || !this.chatId) return false;
+    const key = poll.key || poll.workout?.id || poll.id;
+    const item = this.pollsByKey.get(key);
+    if (!item?.tgMessageId) return false;
+
+    try {
+      await this.api.deleteMessage(this.chatId, item.tgMessageId);
+      this.log(`[Telegram] Опрос message_id ${item.tgMessageId} удален из чата ${this.chatId}`);
+    } catch (err) {
+      if (!/message to delete not found/i.test(err?.message || '')) {
+        this.onError(`[Telegram] Ошибка удаления опроса message_id ${item.tgMessageId}: ${err?.message || err}`);
+      }
+    }
+    this.pollsByKey.delete(key);
+    if (item.pollId) this.keyByPollId.delete(item.pollId);
+    this.saveState();
+    return true;
+  }
+
+  async cleanupExpired(now = Date.now()) {
+    if (!this.enabled || !this.chatId) return;
+    for (const [key, item] of Array.from(this.pollsByKey.entries())) {
+      if (!item?.date || !item?.tgMessageId) continue;
+      const deadline = Date.parse(item.date + 'T22:00:00+03:00');
+      if (Number.isFinite(deadline) && now >= deadline) {
+        try {
+          await this.api.deleteMessage(this.chatId, item.tgMessageId);
+          this.log(`[Telegram] Просроченный опрос (${item.date}, message_id ${item.tgMessageId}) удален из чата ${this.chatId}`);
+        } catch (err) {
+          if (!/message to delete not found/i.test(err?.message || '')) {
+            this.onError(`[Telegram] Ошибка удаления просроченного опроса message_id ${item.tgMessageId}: ${err?.message || err}`);
+          }
+        }
+        this.pollsByKey.delete(key);
+        if (item.pollId) this.keyByPollId.delete(item.pollId);
+        this.saveState();
+      }
+    }
+  }
+
   async sendPersonal(clientIdOrUserId, text) {
     if (!this.enabled || !clientIdOrUserId) return false;
     let chatId = this.bindings.getRecord(clientIdOrUserId)?.chatId;
@@ -190,6 +231,10 @@ class TelegramBridge {
       this.log('[Telegram] TelegramBot не сконфигурирован (пропущен токен или отключен).');
       return;
     }
+
+    void this.cleanupExpired().catch(err => {
+      this.onError('[Telegram] Ошибка очистки просроченных опросов при старте: ' + (err?.message || err));
+    });
 
     if (typeof this.onBindingsChanged === 'function') {
       try {

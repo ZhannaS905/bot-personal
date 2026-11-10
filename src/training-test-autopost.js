@@ -479,6 +479,13 @@ class Autopost{
       );
       if (!claimed) { remaining.push(poll); continue; }
       await this.api.deleteCalendarPoll({...poll, status: 'deletePending'});
+      if (this.telegramBridge) {
+        try {
+          await this.telegramBridge.deleteCalendar(poll);
+        } catch (err) {
+          this.log('Training Test: telegram poll delete error: ' + (err?.message || err));
+        }
+      }
       await this.calendarPollStore.finishDelete(
         poll.key, poll.id, poll.mid
       );
@@ -499,7 +506,14 @@ class Autopost{
     }
     remaining.push(poll);
   }
-   return remaining;
+  if (this.telegramBridge) {
+    try {
+      await this.telegramBridge.cleanupExpired(+now);
+    } catch (err) {
+      this.log('Training Test: telegram cleanupExpired error: ' + (err?.message || err));
+    }
+  }
+  return remaining;
  }
 
   async resumeCalendarDeletes() {
@@ -519,6 +533,13 @@ class Autopost{
 
       try {
         await this.api.deleteCalendarPoll(poll);
+        if (this.telegramBridge) {
+          try {
+            await this.telegramBridge.deleteCalendar(poll);
+          } catch (err) {
+            this.log('Training Test: telegram poll delete error: ' + (err?.message || err));
+          }
+        }
         await this.calendarPollStore.finishDelete(
           poll.key, poll.id, poll.mid
         );

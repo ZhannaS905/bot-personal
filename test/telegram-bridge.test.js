@@ -79,5 +79,54 @@ test('TelegramBridge sendCalendar and editCalendar track message ID and call Tel
   assert.equal(calls.edit.length, 1);
   assert.equal(calls.edit[0].mid, 555);
 
+  // Delete poll
+  calls.delete = [];
+  mockApi.deleteMessage = async (chatId, messageId) => {
+    calls.delete.push({ chatId, messageId });
+    return true;
+  };
+  const deleted = await bridge.deleteCalendar(poll);
+  assert.equal(deleted, true);
+  assert.equal(calls.delete.length, 1);
+  assert.equal(calls.delete[0].chatId, '-100999');
+  assert.equal(calls.delete[0].messageId, 555);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('TelegramBridge cleanupExpired automatically purges polls past 22:00', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-bridge-cleanup-'));
+  const deletedMessages = [];
+  const mockApi = {
+    deleteMessage: async (chatId, messageId) => {
+      deletedMessages.push({ chatId, messageId });
+      return true;
+    }
+  };
+
+  const bridge = new TelegramBridge({
+    token: 'test:token',
+    chatId: '-100999',
+    stateDir: dir,
+    api: mockApi
+  });
+
+  // Inject a poll from today (2026-11-10) with message_id 777
+  bridge.pollsByKey.set('workout-key-today', {
+    tgMessageId: 777,
+    pollId: 'poll-1',
+    date: '2026-11-10'
+  });
+  bridge.saveState();
+
+  // Run cleanupExpired at 22:05 MSK (19:05 UTC)
+  const after22 = Date.parse('2026-11-10T22:05:00+03:00');
+  await bridge.cleanupExpired(after22);
+
+  assert.equal(deletedMessages.length, 1);
+  assert.equal(deletedMessages[0].chatId, '-100999');
+  assert.equal(deletedMessages[0].messageId, 777);
+  assert.equal(bridge.pollsByKey.size, 0);
+
   fs.rmSync(dir, { recursive: true, force: true });
 });
