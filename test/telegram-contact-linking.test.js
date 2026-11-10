@@ -32,6 +32,11 @@ test('Telegram contact linking: /start, contact sharing, ownership check and bin
     return clients.find(c => phone(c.phone) === normPhone) || null;
   };
 
+  const syncedBindings = [];
+  const onBindingsChanged = async (list) => {
+    syncedBindings.push(list);
+  };
+
   const bridge = new TelegramBridge({
     token: 'test-token',
     chatId: '-100123456789',
@@ -39,7 +44,8 @@ test('Telegram contact linking: /start, contact sharing, ownership check and bin
     stateDir: dir,
     api: mockApi,
     bindings,
-    clientFinder
+    clientFinder,
+    onBindingsChanged
   });
 
   t.after(async () => {
@@ -111,6 +117,8 @@ test('Telegram contact linking: /start, contact sharing, ownership check and bin
   assert.equal(bindings.getClientId('555'), 'client-1');
   assert.equal(bindings.getTgUserId('client-1'), '555');
   assert.equal(bindings.getRecord('555').name, 'Иван Петров');
+  assert.ok(syncedBindings.length >= 1);
+  assert.equal(syncedBindings.at(-1)[0].clientId, 'client-1');
 
   // 5. Subsequent /start informs user they are already linked
   await onMessage({

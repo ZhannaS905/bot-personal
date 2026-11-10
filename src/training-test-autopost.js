@@ -906,6 +906,9 @@ const calendarMode=env.TRAINING_TEST_CALENDAR_POLLS_ENABLED==='true';
      clientFinder: personalCalendar && typeof personalCalendar.findClientByPhone === 'function'
        ? phone => personalCalendar.findClientByPhone(phone)
        : null,
+     onBindingsChanged: personalCalendar && typeof personalCalendar.syncTelegramBindings === 'function'
+       ? bindings => personalCalendar.syncTelegramBindings(bindings)
+       : null,
      log: console.log,
      onError: console.error
    });

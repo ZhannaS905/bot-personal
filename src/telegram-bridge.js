@@ -14,6 +14,7 @@ class TelegramBridge {
     api = null,
     clientFinder = null,
     bindings = null,
+    onBindingsChanged = null,
     log = console.log,
     onError = console.error
   } = {}) {
@@ -25,6 +26,7 @@ class TelegramBridge {
     this.log = log;
     this.onError = onError;
     this.clientFinder = clientFinder;
+    this.onBindingsChanged = onBindingsChanged;
 
     const { getTelegramBindings } = require('./telegram-bindings');
     this.bindings = bindings || getTelegramBindings(this.stateDir);
@@ -189,6 +191,16 @@ class TelegramBridge {
       return;
     }
 
+    if (typeof this.onBindingsChanged === 'function') {
+      try {
+        Promise.resolve(this.onBindingsChanged(this.bindings.allBindings())).catch(err => {
+          this.onError('[Telegram] Ошибка начальной синхронизации привязок: ' + (err?.message || err));
+        });
+      } catch (err) {
+        this.onError('[Telegram] Ошибка начальной синхронизации привязок: ' + (err?.message || err));
+      }
+    }
+
     this.poller = new TelegramPoller({
       api: this.api,
       log: this.log,
@@ -267,6 +279,15 @@ class TelegramBridge {
                 phone: rawPhone,
                 chatId
               });
+              if (typeof this.onBindingsChanged === 'function') {
+                try {
+                  Promise.resolve(this.onBindingsChanged(this.bindings.allBindings())).catch(err => {
+                    this.onError('[Telegram] Ошибка синхронизации привязок: ' + (err?.message || err));
+                  });
+                } catch (err) {
+                  this.onError('[Telegram] Ошибка синхронизации привязок: ' + (err?.message || err));
+                }
+              }
               this.log(`[Telegram] Пользователь ${senderId} успешно привязан к клиенту ${client.id} (${clientName})`);
               await this.api.send(chatId, {
                 text: `✅ Привязка успешно сохранена!\n\nВы привязаны к профилю: <b>${clientName}</b>.\nТеперь при нажатии «✅ Приду» в опросах тренировок ваше посещение будет автоматически учитываться на сайте FitPP, а также сюда будут приходить уведомления об абонементе.`,

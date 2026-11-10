@@ -106,6 +106,22 @@ function createPersonalCalendar({sdk, raw, validateAuth}) {
         } catch {}
       }
       return booked;
+    },
+    async syncTelegramBindings(allBindings) {
+      if (!Array.isArray(allBindings)) return false;
+      await validateAuth();
+      const tgBindingsRef = sdk.doc(raw, 'fitppWorkspaces/personal-v1/notificationBindings/telegram');
+      const data = {
+        version: 1,
+        updatedAt: Date.now(),
+        bindings: allBindings.map(b => ({
+          clientId: String(b.clientId),
+          telegramUserId: Number(b.userId || b.telegramUserId),
+          linkedAt: b.linkedAt || Date.now()
+        }))
+      };
+      await sdk.setDoc(tgBindingsRef, data);
+      return true;
     }
   };
 }
